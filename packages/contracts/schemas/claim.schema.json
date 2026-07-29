@@ -1,0 +1,34 @@
+{
+  "title": "Claim",
+  "type": "object",
+  "properties": {
+    "claimId": { "type": "string" },
+    "claimKey": { "type": "string" },
+    "sourceRole": { "type": "string", "enum": ["market_competition", "business_performance", "risk_audit"] },
+    "statement": { "type": "string" },
+    "extractedNumbers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "value": { "type": "number" },
+          "unit": { "type": "string" },
+          "metricId": { "type": "string" }
+        },
+        "required": ["value", "unit", "metricId"],
+        "additionalProperties": false
+      }
+    },
+    "evidenceIds": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "businessImplication": { "type": "string" },
+    "caveats": { "type": "array", "items": { "type": "string" } },
+    "counterEvidence": { "type": "array", "items": { "type": "string" } },
+    "direction": { "type": "string", "enum": ["positive", "negative", "neutral"] },
+    "magnitude": { "type": "string", "enum": ["high", "moderate", "low"] },
+    "status": { "type": "string", "enum": ["pending", "accepted", "rejected", "conflict"] },
+    "rejectionReason": { "type": ["string", "null"] },
+    "conflictGroupId": { "type": ["string", "null"] }
+  },
+  "required": ["claimId", "claimKey", "sourceRole", "statement", "extractedNumbers", "evidenceIds", "status"],
+  "additionalProperties": false
+}

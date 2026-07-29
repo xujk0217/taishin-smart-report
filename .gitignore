@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+.env
+
+# Build outputs
+dist/
+build/
+*.js.map
+*.d.ts.map
+
+# IDE
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Test outputs
+services/parser-metrics/output/
+coverage/
+.coverage
+htmlcov/
+.hypothesis/
+
+# CDK
+cdk.out/
+cdk.context.json
+
+# AWS
+.aws-sam/
+
+# Generated
+*.generated.*
+
+# Secrets
+.env.local
+.env.production

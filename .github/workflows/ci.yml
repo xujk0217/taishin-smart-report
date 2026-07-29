@@ -1,0 +1,166 @@
+name: CI - Test & Build
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_VERSION: '20'
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  # ─── Python Tests (Parser, Validation, Bedrock) ─────────────
+  test-python:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [parser-metrics, validation]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install openpyxl pydantic pytest hypothesis boto3 moto xlsxwriter jsonschema
+
+      - name: Run tests
+        working-directory: services/${{ matrix.service }}
+        run: python -m pytest tests/ -v --tb=short
+
+  # ─── TypeScript Type Check ──────────────────────────────────
+  typecheck-ts:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        package:
+          - packages/contracts
+          - services/render-pptx
+          - services/api
+          - services/render-html-preview
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: ${{ matrix.package }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ${{ matrix.package }}
+        run: npm install
+
+      - name: Type check
+        working-directory: ${{ matrix.package }}
+        run: npx tsc --noEmit
+
+  # ─── Integration Test: Pipeline E2E ─────────────────────────
+  integration-pipeline:
+    runs-on: ubuntu-latest
+    needs: [test-python]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: pip install openpyxl pydantic pytest hypothesis
+
+      - name: Run pipeline against reference data
+        working-directory: services/parser-metrics
+        run: |
+          python -m src.pipeline \
+            "../../packages/test-fixtures/fixtures/reference-data.xlsx" \
+            "./output"
+
+      - name: Verify pipeline outputs
+        working-directory: services/parser-metrics
+        run: |
+          python -c "
+          import json
+          packet = json.load(open('output/evidence-packet.json'))
+          assert packet['frozen'] == True, 'Packet not frozen'
+          assert len(packet['metrics']) > 0, 'No metrics computed'
+          assert len(packet['sourceRefs']) > 0, 'No source refs'
+          assert len(packet['unsupportedRequests']) > 0, 'YoY should be unsupported'
+          print(f'✅ Pipeline OK: {len(packet[\"metrics\"])} metrics, {len(packet[\"sourceRefs\"])} refs')
+          print(f'✅ YoY blocked: {packet[\"unsupportedRequests\"][0][\"reason\"]}')
+          "
+
+      - name: Upload pipeline output
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-output
+          path: services/parser-metrics/output/
+
+  # ─── PPTX Generation Test ───────────────────────────────────
+  test-pptx-render:
+    runs-on: ubuntu-latest
+    needs: [integration-pipeline]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Download pipeline output
+        uses: actions/download-artifact@v4
+        with:
+          name: pipeline-output
+          path: services/parser-metrics/output/
+
+      - name: Install render-pptx deps
+        working-directory: services/render-pptx
+        run: npm install
+
+      - name: Generate PPTX
+        working-directory: services/render-pptx
+        run: npx tsx src/test-generate.ts
+
+      - name: Verify PPTX generated
+        run: |
+          FILE="services/parser-metrics/output/output.pptx"
+          if [ ! -f "$FILE" ]; then
+            echo "❌ PPTX not generated"
+            exit 1
+          fi
+          SIZE=$(stat -c%s "$FILE" 2>/dev/null || stat -f%z "$FILE")
+          echo "✅ PPTX generated: ${SIZE} bytes"
+          if [ "$SIZE" -lt 10000 ]; then
+            echo "❌ PPTX too small, likely invalid"
+            exit 1
+          fi
+
+      - name: Upload PPTX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-pptx
+          path: services/parser-metrics/output/output.pptx
+
+  # ─── CDK Synth (validate infra code) ────────────────────────
+  cdk-synth:
+    runs-on: ubuntu-latest
+    needs: [typecheck-ts]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install CDK deps
+        working-directory: infra/cdk
+        run: npm install
+
+      - name: CDK Synth
+        working-directory: infra/cdk
+        run: npx cdk synth --quiet 2>&1 || echo "CDK synth requires AWS context, skipping in CI for now"

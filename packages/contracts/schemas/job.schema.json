@@ -1,0 +1,29 @@
+{
+  "title": "Job",
+  "type": "object",
+  "properties": {
+    "jobId": { "type": "string" },
+    "tenantId": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["created", "processing", "waiting_formula_approval", "waiting_preview_approval", "completed", "failed"]
+    },
+    "currentStage": { "type": "string" },
+    "inputS3Uri": { "type": "string" },
+    "userRequest": { "type": "string" },
+    "createdAt": { "type": "string" },
+    "updatedAt": { "type": "string" },
+    "artifactManifest": {
+      "type": ["object", "null"],
+      "properties": {
+        "pptxUri": { "type": "string" },
+        "xlsxUri": { "type": "string" },
+        "htmlPreviewUri": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "error": { "type": ["object", "null"] }
+  },
+  "required": ["jobId", "tenantId", "status", "currentStage", "inputS3Uri", "userRequest", "createdAt", "updatedAt"],
+  "additionalProperties": false
+}

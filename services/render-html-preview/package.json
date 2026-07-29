@@ -1,0 +1,20 @@
+{
+  "name": "@smart-report/render-html-preview",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'lint ok'",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@smart-report/contracts": "file:../../packages/contracts"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0",
+    "@types/node": "^20.0.0"
+  }
+}

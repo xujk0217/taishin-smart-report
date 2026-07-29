@@ -1,0 +1,247 @@
+:root {
+  --primary: #C01B2B;
+  --primary-dark: #8B0000;
+  --secondary: #FFFFFF;
+  --accent: #E8E8E8;
+  --text: #333333;
+  --text-light: #666666;
+  --bg: #F5F5F5;
+  --success: #4CAF50;
+  --warning: #FF9800;
+  --error: #F44336;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: '微軟正黑體', 'Microsoft JhengHei', 'Noto Sans TC', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+}
+
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+  color: white;
+  padding: 1rem 2rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.header h1 {
+  font-size: 1.4rem;
+  font-weight: 600;
+}
+
+.header .subtitle {
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+
+.main {
+  flex: 1;
+  padding: 2rem;
+  max-width: 1400px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.card {
+  background: white;
+  border-radius: 12px;
+  padding: 2rem;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  margin-bottom: 1.5rem;
+}
+
+.card h2 {
+  color: var(--primary);
+  margin-bottom: 1rem;
+  font-size: 1.2rem;
+}
+
+.btn {
+  padding: 0.75rem 1.5rem;
+  border: none;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: white;
+}
+
+.btn-primary:hover {
+  background: var(--primary-dark);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(192, 27, 43, 0.3);
+}
+
+.btn-primary:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.upload-zone {
+  border: 2px dashed var(--accent);
+  border-radius: 12px;
+  padding: 3rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.upload-zone:hover {
+  border-color: var(--primary);
+  background: rgba(192, 27, 43, 0.02);
+}
+
+.upload-zone.active {
+  border-color: var(--primary);
+  background: rgba(192, 27, 43, 0.05);
+}
+
+.progress-bar {
+  height: 4px;
+  background: var(--accent);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 1rem;
+}
+
+.progress-bar .fill {
+  height: 100%;
+  background: var(--primary);
+  border-radius: 2px;
+  transition: width 0.5s ease;
+}
+
+.stage-list {
+  list-style: none;
+  padding: 0;
+}
+
+.stage-list li {
+  padding: 0.75rem 1rem;
+  border-left: 3px solid var(--accent);
+  margin-bottom: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.stage-list li.active {
+  border-left-color: var(--primary);
+  background: rgba(192, 27, 43, 0.03);
+}
+
+.stage-list li.completed {
+  border-left-color: var(--success);
+}
+
+.stage-list li.completed::before {
+  content: '✓';
+  color: var(--success);
+  font-weight: bold;
+}
+
+.preview-container {
+  display: grid;
+  grid-template-columns: 200px 1fr 300px;
+  gap: 1rem;
+  height: calc(100vh - 200px);
+}
+
+.slide-thumbnails {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.slide-thumb {
+  aspect-ratio: 16/9;
+  background: white;
+  border: 2px solid var(--accent);
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0.25rem;
+  font-size: 0.6rem;
+  overflow: hidden;
+}
+
+.slide-thumb.active {
+  border-color: var(--primary);
+}
+
+.slide-preview {
+  background: white;
+  border-radius: 8px;
+  aspect-ratio: 16/9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+}
+
+.evidence-panel {
+  background: white;
+  border-radius: 8px;
+  padding: 1rem;
+  overflow-y: auto;
+}
+
+.evidence-panel h3 {
+  color: var(--primary);
+  font-size: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.tooltip-demo {
+  position: relative;
+  display: inline-block;
+  border-bottom: 1px dotted var(--primary);
+  cursor: help;
+  color: var(--primary);
+  font-weight: 500;
+}
+
+.tooltip-demo .tooltip-content {
+  visibility: hidden;
+  position: absolute;
+  bottom: 125%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--text);
+  color: white;
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  white-space: nowrap;
+  z-index: 100;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.tooltip-demo:hover .tooltip-content {
+  visibility: visible;
+  opacity: 1;
+}

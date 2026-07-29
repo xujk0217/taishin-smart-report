@@ -1,0 +1,7 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+  - "services/api"
+  - "services/render-pptx"
+  - "services/render-html-preview"
+  - "infra/cdk"

@@ -1,0 +1,22 @@
+{
+  "title": "MetricRecord",
+  "type": "object",
+  "properties": {
+    "metricId": { "type": "string" },
+    "metricName": { "type": "string" },
+    "formulaId": { "type": "string" },
+    "formulaDefinition": { "type": "string" },
+    "inputSourceIds": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "computedValue": { "type": "number" },
+    "unit": { "type": "string", "enum": ["percent", "million_twd", "count", "rank", "ratio"] },
+    "period": { "type": "string" },
+    "entity": { "type": "string" },
+    "rank": { "type": ["integer", "null"] },
+    "rankTotal": { "type": ["integer", "null"] },
+    "computationSteps": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "valid": { "type": "boolean" },
+    "invalidReason": { "type": ["string", "null"] }
+  },
+  "required": ["metricId", "metricName", "formulaId", "formulaDefinition", "inputSourceIds", "computedValue", "unit", "period", "entity", "computationSteps", "valid"],
+  "additionalProperties": false
+}

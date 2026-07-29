@@ -1,0 +1,41 @@
+{
+  "title": "EvidencePacket",
+  "type": "object",
+  "properties": {
+    "packetId": { "type": "string" },
+    "jobId": { "type": "string" },
+    "workbook": {
+      "type": "object",
+      "properties": {
+        "s3Uri": { "type": "string" },
+        "sha256": { "type": "string" }
+      },
+      "required": ["s3Uri", "sha256"],
+      "additionalProperties": false
+    },
+    "formulaPlanId": { "type": "string" },
+    "sourceRefs": { "type": "array", "items": { "type": "object" } },
+    "metrics": { "type": "array", "items": { "type": "object" } },
+    "chartDataSpecs": { "type": "array", "items": { "type": "object" } },
+    "validationFindings": { "type": "array", "items": { "type": "object" } },
+    "unsupportedRequests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "metricName": { "type": "string" },
+          "reason": { "type": "string" },
+          "requiredPeriods": { "type": "array", "items": { "type": "string" } },
+          "availablePeriods": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["metricName", "reason"],
+        "additionalProperties": false
+      }
+    },
+    "frozen": { "type": "boolean" },
+    "frozenAt": { "type": ["string", "null"] },
+    "canonicalSha256": { "type": ["string", "null"] }
+  },
+  "required": ["packetId", "jobId", "workbook", "formulaPlanId", "sourceRefs", "metrics", "chartDataSpecs", "validationFindings", "unsupportedRequests", "frozen"],
+  "additionalProperties": false
+}

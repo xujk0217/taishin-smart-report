@@ -1,0 +1,55 @@
+{
+  "title": "FormulaPlan",
+  "type": "object",
+  "properties": {
+    "planId": { "type": "string" },
+    "jobId": { "type": "string" },
+    "formulas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "formulaId": { "type": "string" },
+          "name": { "type": "string" },
+          "definition": { "type": "string" },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": { "type": "string" },
+                "sheet": { "type": "string" },
+                "entity": { "type": "string" }
+              },
+              "required": ["field", "sheet"],
+              "additionalProperties": false
+            }
+          },
+          "unit": { "type": "string" },
+          "displayFormat": { "type": "string" },
+          "supported": { "type": "boolean" }
+        },
+        "required": ["formulaId", "name", "definition", "inputs", "unit", "supported"],
+        "additionalProperties": false
+      }
+    },
+    "unsupported": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "reason": { "type": "string" },
+          "wouldRequire": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["name", "reason"],
+        "additionalProperties": false
+      }
+    },
+    "assumptions": { "type": "array", "items": { "type": "string" } },
+    "version": { "type": "integer" },
+    "status": { "type": "string", "enum": ["pending_approval", "approved", "rejected"] }
+  },
+  "required": ["planId", "jobId", "formulas", "unsupported", "assumptions", "version", "status"],
+  "additionalProperties": false
+}

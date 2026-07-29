@@ -1,0 +1,17 @@
+{
+  "name": "smart-report-generator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "智匯數據簡報神器 - AI Credit Card Report to PPTX",
+
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm test --workspaces --if-present",
+    "test:python": "cd services/parser-metrics && python3.11 -m pytest tests/ && cd ../validation && python3.11 -m pytest tests/",
+    "test:all": "npm test && npm run test:python"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
