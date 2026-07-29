@@ -37,3 +37,6 @@ cdk.context.json
 # Secrets
 .env.local
 .env.production
+114信用卡資料/
+demo-output/*.pptx
+apps/web/.env

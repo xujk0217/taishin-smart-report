@@ -27,9 +27,11 @@ def validate_claims(
 
     # Build lookup indexes
     metric_index = {m["metricId"]: m for m in evidence_packet.get("metrics", [])}
-    unsupported_names = {
-        u["metricName"] for u in evidence_packet.get("unsupportedRequests", [])
-    }
+    unsupported_names = set()
+    for u in evidence_packet.get("unsupportedRequests", []):
+        name = u.get("metricName") or u.get("name", "")
+        if name:
+            unsupported_names.add(name)
 
     for claim in claims:
         claim_id = claim.get("claimId", "unknown")

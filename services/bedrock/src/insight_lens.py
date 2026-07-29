@@ -6,7 +6,30 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from .converse_client import BedrockConverseClient, ConverseRequest
+from .converse_client import BedrockConverseClient
+from .groq_client import ConverseRequest
+
+
+def get_client():
+    """Get the best available client: Groq (free + fast) > Ollama (local) > Bedrock (cloud)."""
+    import os
+    
+    # Priority 1: Groq (free, fast, reliable)
+    groq_key = os.environ.get("GROQ_API_KEY", "")
+    if groq_key:
+        from .groq_client import GroqClient
+        print("[InsightLens] Using Groq (free tier) backend", flush=True)
+        return GroqClient(api_key=groq_key)
+    
+    # Priority 2: Ollama (local)
+    from .ollama_client import OllamaClient, is_ollama_available
+    if is_ollama_available():
+        print("[InsightLens] Using Ollama (local) backend", flush=True)
+        return OllamaClient()
+    
+    # Priority 3: Bedrock (cloud)
+    print("[InsightLens] Using Bedrock (cloud) backend", flush=True)
+    return BedrockConverseClient()
 
 
 # ─── Output Schema for RoleInsight ────────────────────────────
@@ -174,7 +197,7 @@ class InsightLens:
         """Build user message containing evidence data for the lens."""
         # Include metrics summary (limit to avoid token overflow)
         metrics_summary = []
-        for m in packet.get("metrics", [])[:50]:  # Limit for token budget
+        for m in packet.get("metrics", [])[:15]:  # Limit for Groq free tier token budget
             if m.get("valid"):
                 metrics_summary.append({
                     "metricId": m["metricId"],
@@ -218,18 +241,17 @@ class InsightLens:
 
 
 async def run_lenses_parallel(
-    client: BedrockConverseClient,
+    client,
     evidence_packet: dict[str, Any],
 ) -> dict[str, Any]:
     """
     Run all three lenses. In production this uses Step Functions Parallel.
     For local dev, we run sequentially with error handling.
+    Client can be either BedrockConverseClient or OllamaClient.
     
     Returns:
         Combined results dict with all claims and any failures
     """
-    import asyncio
-
     roles = ["market_competition", "business_performance", "risk_audit"]
     results: dict[str, Any] = {
         "allClaims": [],

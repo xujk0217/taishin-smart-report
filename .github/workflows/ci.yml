@@ -53,6 +53,40 @@ jobs:
           npm install
           npx tsc --noEmit
 
+  # ─── Frontend: typecheck, build, and verification suites ────
+  test-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install
+        working-directory: apps/web
+        run: npm install
+
+      - name: Typecheck
+        working-directory: apps/web
+        run: npx tsc --noEmit
+
+      - name: PPTX export structure
+        working-directory: apps/web
+        run: node scripts/verify-pptx.mjs
+
+      - name: Natural-language edit guardrails
+        working-directory: apps/web
+        run: node scripts/verify-guardrails.mjs
+
+      - name: Known-error regression suite
+        working-directory: apps/web
+        run: node test-regression.mjs
+
+      - name: Build
+        working-directory: apps/web
+        run: npm run build
+
   # ─── Integration Test: Pipeline E2E ─────────────────────────
   integration-pipeline:
     runs-on: ubuntu-latest
