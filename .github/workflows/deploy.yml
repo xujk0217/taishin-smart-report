@@ -20,9 +20,16 @@ permissions:
   contents: read
 
 jobs:
-  # ─── Run all tests first ────────────────────────────────────
+  # ─── Run tests inline ────────────────────────────────────────
   test:
-    uses: ./.github/workflows/ci.yml
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install openpyxl pydantic pytest hypothesis
+      - run: cd services/parser-metrics && python -m pytest tests/ -v
 
   # ─── Deploy Infrastructure ──────────────────────────────────
   deploy-infra:
