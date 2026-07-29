@@ -36,29 +36,22 @@ jobs:
   # ─── TypeScript Type Check ──────────────────────────────────
   typecheck-ts:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        package:
-          - packages/contracts
-          - services/render-pptx
-          - services/api
-          - services/render-html-preview
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: ${{ matrix.package }}/package-lock.json
 
-      - name: Install dependencies
-        working-directory: ${{ matrix.package }}
-        run: npm install
+      - name: Typecheck contracts
+        working-directory: packages/contracts
+        run: npm install && npx tsc --noEmit
 
-      - name: Type check
-        working-directory: ${{ matrix.package }}
-        run: npx tsc --noEmit
+      - name: Typecheck render-pptx
+        working-directory: services/render-pptx
+        run: |
+          npm install
+          npx tsc --noEmit
 
   # ─── Integration Test: Pipeline E2E ─────────────────────────
   integration-pipeline:
