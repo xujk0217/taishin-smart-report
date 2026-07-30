@@ -53,15 +53,28 @@ export interface PipelineResult {
 // ─── Helper ──────────────────────────────────────────────────
 
 async function aiCall(system: string, user: string, maxTokens = 6000): Promise<string> {
-  const data = await callGroqWithRetry(API_KEY, {
-    messages: [
-      { role: 'system', content: system },
-      { role: 'user', content: user },
-    ],
-    temperature: 0.25,
-    max_tokens: maxTokens,
-  });
-  return extractContent(data);
+  // Retry up to 2 times on failure (covers Vercel 60s timeout edge cases)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const data = await callGroqWithRetry(API_KEY, {
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user },
+        ],
+        temperature: 0.25,
+        max_tokens: maxTokens,
+      });
+      const content = extractContent(data);
+      if (content) return content;
+      throw new Error('Empty AI response');
+    } catch (err: any) {
+      console.warn(`[Pipeline] aiCall attempt ${attempt + 1} failed:`, err?.message);
+      if (attempt === 2) throw err;
+      // Brief delay before retry
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+  throw new Error('aiCall failed after 3 attempts');
 }
 
 function parseJSON<T>(text: string): T | null {
