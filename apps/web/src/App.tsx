@@ -8,6 +8,7 @@ import { ProcessingStage } from './components/ProcessingStage';
 import { PreviewStage } from './components/PreviewStage';
 import { SendStage } from './components/SendStage';
 import { generatePlanWithAI } from './utils/groq';
+import { runAIPipeline, type PipelineResult } from './utils/ai-pipeline';
 import { readAllExcelFiles, summariesToText, type FileSummary } from './utils/excel-reader';
 import { computeMetrics, type ComputeResult } from './utils/metric-engine';
 import { generateSlideSpec } from './utils/ai-slide-generator';
@@ -30,10 +31,11 @@ function App() {
   const [plan, setPlan] = useState<AnalysisPlan | null>(null);
   const [slideSpecs, setSlideSpecs] = useState<SlideSpec[]>([]);
   const [progress, setProgress] = useState(0);
+  const [aiStatus, setAiStatus] = useState('');
   const fileSummariesRef = useRef<FileSummary[]>([]);
   const computeResultRef = useRef<ComputeResult | null>(null);
   const excelSummaryRef = useRef<string>('');
-
+  const pipelineResultRef = useRef<PipelineResult | null>(null);
   // ─── Browser history management (fix back button) ──────────
   useEffect(() => {
     const handlePopState = (e: PopStateEvent) => {
@@ -67,7 +69,6 @@ function App() {
     
     readAllExcelFiles(uploadedFiles)
       .then(summaries => {
-        // Check if files are monthly and need merging
         let processedSummaries = summaries;
         if (isMonthlyFileSet(summaries)) {
           console.log('[App] Detected monthly file set, merging...');
@@ -76,18 +77,57 @@ function App() {
         fileSummariesRef.current = processedSummaries;
         const summaryText = summariesToText(processedSummaries);
         excelSummaryRef.current = summaryText;
-        console.log('Excel summary for AI:', summaryText);
-        return generatePlanWithAI(userPrompt, fileNames, summaryText);
+
+        // Compute metrics early so pipeline can use dataSummary
+        const result = computeMetrics(processedSummaries);
+        computeResultRef.current = result;
+        const topMetrics = result.metrics
+          .filter(m => m.rank && m.rank <= 5)
+          .slice(0, 10);
+        const dataSummary = [
+          `銀行數: ${result.summary.totalEntities}`,
+          `月份數: ${result.summary.totalPeriods}`,
+          `工作表: ${result.summary.sheetsUsed}`,
+          '',
+          '前五名銀行（最新月份）:',
+          ...topMetrics.map(m => `  ${m.entity} ${m.metricName}: ${m.value}${m.unit} (排名${m.rank})`),
+        ].join('\n');
+
+        // Run the 3-step AI pipeline
+        return runAIPipeline(userPrompt, summaryText, dataSummary, (p) => {
+          setAiStatus(`[${p.step}/${p.total}] ${p.label}${p.detail ? `\n${p.detail}` : ''}`);
+        });
       })
-      .then(aiPlan => {
-        setPlan(aiPlan);
+      .then(pipelineResult => {
+        pipelineResultRef.current = pipelineResult;
+        // Convert pipeline result to AnalysisPlan format for PlanStage
+        setPlan({
+          formulas: pipelineResult.metrics.map(m => ({
+            id: m.id,
+            name: m.name,
+            definition: m.definition,
+            supported: m.supported,
+            reason: m.reason,
+          })),
+          unsupported: pipelineResult.unsupported,
+          assumptions: [
+            `報告對象：${pipelineResult.audience.audience}`,
+            `報告目的：${pipelineResult.audience.purpose}`,
+            `語氣：${pipelineResult.audience.tone}`,
+            `深度：${pipelineResult.audience.depth === 'executive' ? '高階摘要' : pipelineResult.audience.depth === 'detailed' ? '詳細分析' : '技術細節'}`,
+            '期間格式為民國年月（11401 = 114年1月）',
+            '金額單位為新臺幣千元',
+          ],
+          suggestedSlides: pipelineResult.suggestedSlides,
+        });
+        setAiStatus('');
         setStage('plan');
       })
       .catch(err => {
-        console.error('AI plan generation failed:', err);
-        // Show error to user, don't silently use mock
+        console.error('AI pipeline failed:', err);
+        setAiStatus('');
         const useMock = confirm(
-          `AI 分析暫時無法使用（${err?.message?.slice(0, 60) ?? '連線逾時'}）。\n\n按「確定」使用範例計劃繼續，按「取消」返回重試。`
+          `AI 分析失敗（${err?.message?.slice(0, 60) ?? '連線逾時'}）。\n\n按「確定」使用範例計劃繼續，按「取消」返回重試。`
         );
         if (useMock) {
           setPlan(generateMockPlan(userPrompt));
@@ -191,7 +231,7 @@ function App() {
           <UploadStage onComplete={handleUploadComplete} />
         )}
         {stage === 'analyzing' && (
-          <AnalyzingStage prompt={prompt} />
+          <AnalyzingStage prompt={prompt} status={aiStatus} />
         )}
         {stage === 'plan' && plan && (
           <PlanStage plan={plan} onApprove={handlePlanApproved} onBack={() => setStage('upload')} />
