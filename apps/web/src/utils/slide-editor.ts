@@ -10,7 +10,7 @@
 import { callGroqWithRetry, extractContent } from './groq-retry';
 import type { SlideSpec, SlideElement } from '../types/slide-spec';
 
-const GROQ_KEY = import.meta.env.VITE_GROQ_KEY || '';
+const GROQ_KEY = import.meta.env.VITE_OPENCODE_KEY || import.meta.env.VITE_GROQ_KEY || '';
 
 export interface EditViolation {
   code: 'NUMBER_CHANGED' | 'RANK_CHANGED' | 'SOURCE_REMOVED' | 'CHART_REBOUND'
@@ -207,7 +207,7 @@ export async function editSlide(
   if (!GROQ_KEY) {
     return {
       ok: false,
-      violations: [{ code: 'INVALID_SHAPE', message: '尚未設定 AI 金鑰，無法執行語意編輯' }],
+      violations: [{ code: 'INVALID_SHAPE', message: '尚未設定 AI 金鑰（VITE_OPENCODE_KEY 或 VITE_GROQ_KEY），無法執行語意編輯' }],
       changes: [],
     };
   }
@@ -224,7 +224,7 @@ export async function editSlide(
   let raw: string;
   try {
     const timeout = new Promise<never>((_, rej) =>
-      setTimeout(() => rej(new Error('AI 回應逾時')), 30000),
+      setTimeout(() => rej(new Error('AI 回應逾時')), 120000),
     );
     const call = callGroqWithRetry(GROQ_KEY, {
       messages: [

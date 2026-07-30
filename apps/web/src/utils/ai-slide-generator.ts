@@ -6,7 +6,7 @@ import { callGroqWithRetry, extractContent } from './groq-retry';
 import type { PresentationSpec, SlideSpec } from '../types/slide-spec';
 import type { ComputeResult } from './metric-engine';
 
-const GROQ_KEY = import.meta.env.VITE_GROQ_KEY || '';
+const GROQ_KEY = import.meta.env.VITE_OPENCODE_KEY || import.meta.env.VITE_GROQ_KEY || '';
 
 const SYSTEM_PROMPT = `你是一位專業的金融簡報規劃 AI，為台新新光金控設計信用卡市場分析簡報。
 

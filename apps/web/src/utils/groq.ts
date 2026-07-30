@@ -5,7 +5,7 @@
 
 import { callGroqWithRetry, extractContent } from './groq-retry';
 
-const GROQ_API_KEY = import.meta.env.VITE_GROQ_KEY || '';
+const GROQ_API_KEY = import.meta.env.VITE_OPENCODE_KEY || import.meta.env.VITE_GROQ_KEY || '';
 
 export interface AIPlan {
   formulas: { id: string; name: string; definition: string; supported: boolean; reason?: string }[];
@@ -74,7 +74,39 @@ export async function generatePlanWithAI(
   });
 
   const content = extractContent(data);
-  return parseJSON(content);
+  const plan = parseJSON(content);
+
+  // ─── Validation pass: ask AI to verify the plan makes sense ───
+  try {
+    const valData = await callGroqWithRetry(GROQ_API_KEY, {
+      messages: [
+        { role: 'system', content: `你是一位資料分析品質審核員。檢查以下分析計劃是否合理：
+1. formulas 的公式定義是否正確（市占率=個別/總和×100, MoM=(本期-前期)/前期×100）
+2. 是否有不存在的欄位被使用
+3. unsupported 的理由是否合理
+4. suggestedSlides 是否涵蓋重要面向
+
+如果有錯誤，回傳修正後的完整 JSON（同格式）。如果正確，回傳原始 JSON 不做更改。
+只回傳 JSON，不要其他文字。` },
+        { role: 'user', content: `Excel 有這些欄位：金融機構名稱、流通卡數、有效卡數、當月發卡數、當月停卡數、循環信用餘額、未到期分期付款餘額、當月簽帳金額、當月預借現金金額、逾期比率。期間有 11401-11412（12個月）。
+
+待檢查的計劃：
+${JSON.stringify(plan, null, 1)}` },
+      ],
+      temperature: 0.1,
+      max_tokens: 8000,
+    });
+    const valContent = extractContent(valData);
+    const validated = parseJSON(valContent);
+    // Only use validated if it parsed and has content
+    if (validated.formulas.length > 0) {
+      return validated;
+    }
+  } catch (e) {
+    console.warn('[Plan] Validation pass failed, using original:', e);
+  }
+
+  return plan;
 }
 
 function parseJSON(text: string): AIPlan {

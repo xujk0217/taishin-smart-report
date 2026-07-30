@@ -3,6 +3,8 @@ import { DndContext, closestCenter, DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { AnalysisPlan } from '../types';
+import { adjustPlanWithAI } from '../utils/plan-adjuster';
+import { VoiceButton } from './VoiceButton';
 
 interface Props {
   plan: AnalysisPlan;
@@ -68,29 +70,17 @@ export function PlanStage({ plan: initialPlan, onApprove, onBack }: Props) {
     setChatHistory(prev => [...prev, { role: 'user', text: msg }]);
     setIsAdjusting(true);
 
-    // Call Groq to adjust plan
     try {
-      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer PLACEHOLDER_KEY',
-        },
-        body: JSON.stringify({
-          model: 'llama-3.1-8b-instant',
-          messages: [
-            { role: 'system', content: `你是分析計劃調整助理。使用者想修改分析計劃。目前的指標：${formulas.map(f => f.name).join('、')}。目前的投影片：${slides.join('、')}。根據使用者要求，回傳調整建議（純文字，2-3 句話）。` },
-            { role: 'user', content: msg },
-          ],
-          temperature: 0.3,
-          max_tokens: 200,
-        }),
-      });
-      const data = await response.json();
-      const aiReply = data.choices?.[0]?.message?.content || '已收到你的調整需求。';
-      setChatHistory(prev => [...prev, { role: 'ai', text: aiReply }]);
+      const result = await adjustPlanWithAI(formulas, slides, msg);
+      if (result.ok) {
+        if (result.formulas) setFormulas(result.formulas);
+        if (result.slides) setSlides(result.slides);
+        setChatHistory(prev => [...prev, { role: 'ai', text: `✅ ${result.explanation}` }]);
+      } else {
+        setChatHistory(prev => [...prev, { role: 'ai', text: `⚠️ ${result.explanation}` }]);
+      }
     } catch {
-      setChatHistory(prev => [...prev, { role: 'ai', text: '（AI 暫時無法回應，請手動拖曳調整）' }]);
+      setChatHistory(prev => [...prev, { role: 'ai', text: '⚠️ AI 暫時無法回應，請手動拖曳調整' }]);
     }
     setIsAdjusting(false);
   };
@@ -174,8 +164,9 @@ export function PlanStage({ plan: initialPlan, onApprove, onBack }: Props) {
             onKeyDown={e => e.key === 'Enter' && handleChat()}
             disabled={isAdjusting}
           />
-          <button className="btn btn-primary btn-sm" onClick={handleChat} disabled={isAdjusting}>
-            {isAdjusting ? '...' : '送出'}
+          <VoiceButton onResult={text => setChatInput(prev => prev + text)} />
+          <button className="btn btn-primary btn-sm" onClick={handleChat} disabled={isAdjusting || !chatInput.trim()}>
+            {isAdjusting ? '調整中...' : '送出'}
           </button>
         </div>
       </div>
