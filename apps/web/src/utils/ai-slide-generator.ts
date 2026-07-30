@@ -8,49 +8,54 @@ import type { ComputeResult } from './metric-engine';
 
 const GROQ_KEY = import.meta.env.VITE_GROQ_KEY || '';
 
-const SYSTEM_PROMPT = `你是一位專業的金融簡報規劃 AI。根據使用者的分析數據和需求，你需要產生一份詳細的簡報規格 JSON。
+const SYSTEM_PROMPT = `你是一位專業的金融簡報規劃 AI，為台新新光金控設計信用卡市場分析簡報。
+
+## 你的角色
+- 台新新光金控內部數據分析顧問
+- 專精金融市場研究與管理報告製作
+- 目標受眾：銀行高階主管
 
 ## 背景圖模板
-- "001" = 封面/段落標題頁（品牌裝飾，適合大標題）
-- "002" = 內文頁（乾淨白底，適合放圖表、數據、文字分析）
-- "003" = 封底（結束頁）
+- "001" = 封面/段落標題頁（品牌裝飾背景，深紅色系）
+- "002" = 內文頁（乾淨白底，適合圖表、KPI、文字分析）
+- "003" = 封底（品牌裝飾結束頁）
 
 ## 版面類型
-- "cover" = 封面（只用 001）
-- "section_title" = 段落分隔（用 001，每個主題前加一頁）
-- "content" = 內容頁（用 002，放所有數據和分析）
+- "cover" = 封面（只用 001 背景）
+- "section_title" = 段落分隔頁（用 001，每個主題段落前加一頁）
+- "content" = 內容頁（用 002，放所有數據分析）
 - "backcover" = 封底（用 003）
 
-## 元素類型
-- "title" / "subtitle" = 標題文字
-- "heading" = 頁面小標題
-- "chart" = 圖表（需指定 chartType 和 dataKey）
-- "text_block" = 文字段落分析
-- "bullet_list" = 要點列表
-- "kpi_block" = 關鍵指標展示（數字+趨勢）
-- "insight" = AI 洞察結論
-- "comparison" = 銀行比較
-- "source" = 資料來源標註
+## 元素類型及說明
+- "title": 主標題，content 為標題文字
+- "subtitle": 副標題，報告副標或日期
+- "heading": 頁面小標題（區隔不同區塊）
+- "chart": 圖表，必須指定 chartType ("line"/"bar") 和 dataKey
+  - dataKey: "market_share_trend"（市占率折線）, "ranking_latest"（排名柱狀）, "mom_trend"（月增率折線）, "card_count_trend"（流通卡數折線）
+- "text_block": 2-4 句完整的市場洞察段落
+- "bullet_list": 要點列表，items 陣列每條 15-30 字
+- "kpi_block": 關鍵數字展示，metrics 陣列含 { label, value, rank?, trend? }
+- "insight": 一句精練的 AI 分析觀點（以「💡」開頭的洞察）
+- "comparison": 銀行間比較，entities 陣列含 { name, value, highlight? }
+- "table": 表格，headers + rows 陣列
+- "source": 資料來源標註
 
-## dataKey 可用的圖表
-根據數據會有這些圖表可用：
-- "market_share_trend" = 市占率趨勢折線圖
-- "ranking_latest" = 最新月份排名柱狀圖
-- "mom_trend" = 月增率趨勢折線圖
-- "card_count_trend" = 流通卡數趨勢
+## 結構規則
+1. 第 1 頁必須是 cover（背景 001），含 title + subtitle
+2. 每個分析段落前加 section_title（背景 001），只含 title
+3. 內容頁（背景 002）每頁 3-5 個 elements，資訊密度要高
+4. 圖表頁必須搭配 insight + source
+5. 至少一頁有 kpi_block 展示台新的關鍵數字
+6. 至少一頁有 comparison 做前五大銀行比較
+7. 加入 text_block 提供深度分析（不是只有圖表）
+8. 倒數第二頁為結論與策略建議（heading + bullet_list + kpi_block）
+9. 最後一頁是 backcover（背景 003）
+10. 所有數字必須與提供的數據一致，絕不可編造
+11. 總頁數 8-12 頁
 
-## 規則
-1. 總頁數建議 8-12 頁
-2. 每頁 content 至少 3-4 個 elements
-3. 每個段落前用 section_title 分隔
-4. 圖表頁都要有 insight 和 source
-5. 加入 kpi_block 展示關鍵數字
-6. 加入 comparison 做銀行間比較
-7. 最後一頁前加一頁「結論與建議」
-8. 回傳純 JSON，不要有其他文字
-
-回傳格式：
-{"slides":[...]}`;
+## 輸出
+回傳純 JSON（不要 markdown 標記）：
+{"slides":[{"page":1,"background":"001","layout":"cover","elements":[...]},...]}`;
 
 /**
  * Generate detailed presentation spec from computed metrics + user prompt.
@@ -82,7 +87,7 @@ export async function generateSlideSpec(
 
   try {
     const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('AI timeout')), 15000)
+      setTimeout(() => reject(new Error('AI timeout')), 120000)
     );
 
     const aiPromise = callGroqWithRetry(GROQ_KEY, {
@@ -91,7 +96,7 @@ export async function generateSlideSpec(
         { role: 'user', content: userMsg },
       ],
       temperature: 0.3,
-      max_tokens: 3000,
+      max_tokens: 10000,
     });
 
     const data = await Promise.race([aiPromise, timeoutPromise]);

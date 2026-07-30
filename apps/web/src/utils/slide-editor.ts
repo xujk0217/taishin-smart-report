@@ -224,7 +224,7 @@ export async function editSlide(
   let raw: string;
   try {
     const timeout = new Promise<never>((_, rej) =>
-      setTimeout(() => rej(new Error('AI 回應逾時')), 20000),
+      setTimeout(() => rej(new Error('AI 回應逾時')), 30000),
     );
     const call = callGroqWithRetry(GROQ_KEY, {
       messages: [
