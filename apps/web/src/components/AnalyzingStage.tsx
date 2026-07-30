@@ -45,7 +45,7 @@ export function AnalyzingStage({ prompt, status }: Props) {
       </div>
 
       <div style={{ marginTop: '1rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-        DeepSeek V4 Flash · 已用 {elapsed} 秒 · 預計 30-120 秒
+        DeepSeek V4 Flash · 已用 {elapsed} 秒 · 預計 120-300 秒
       </div>
     </div>
   );

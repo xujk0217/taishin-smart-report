@@ -20,6 +20,7 @@ export interface AnalysisPlan {
   unsupported: { name: string; reason: string }[];
   assumptions: string[];
   suggestedSlides: string[];
+  insights?: { topic: string; keyFinding: string; implication: string; recommendation: string }[];
 }
 
 export interface Claim {

@@ -119,6 +119,12 @@ function App() {
             '金額單位為新臺幣千元',
           ],
           suggestedSlides: pipelineResult.suggestedSlides,
+          insights: pipelineResult.insights.map(i => ({
+            topic: i.topic,
+            keyFinding: i.keyFinding,
+            implication: i.implication,
+            recommendation: i.recommendation,
+          })),
         });
         setAiStatus('');
         setStage('plan');

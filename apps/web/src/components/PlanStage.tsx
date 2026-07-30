@@ -124,6 +124,34 @@ export function PlanStage({ plan: initialPlan, onApprove, onBack }: Props) {
         )}
       </div>
 
+      {/* Insights - 數據洞察 */}
+      {initialPlan.insights && initialPlan.insights.length > 0 && (
+        <div className="card">
+          <h2>💡 數據洞察（{initialPlan.insights.length} 項策略觀點）</h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
+            {initialPlan.insights.map((insight, i) => (
+              <div key={i} style={{
+                padding: '0.8rem 1rem', background: '#F0FAF0',
+                border: '1px solid #A9DFBF', borderRadius: '8px',
+              }}>
+                <div style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text)', marginBottom: '0.3rem' }}>
+                  {insight.topic}
+                </div>
+                <div style={{ fontSize: '0.85rem', color: '#2C3E50', marginBottom: '0.4rem', lineHeight: 1.6 }}>
+                  🔍 {insight.keyFinding}
+                </div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-light)', lineHeight: 1.5 }}>
+                  <span style={{ color: 'var(--info)' }}>意涵：</span>{insight.implication}
+                </div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-light)', lineHeight: 1.5 }}>
+                  <span style={{ color: 'var(--success)' }}>建議：</span>{insight.recommendation}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Slides - draggable */}
       <div className="card">
         <h2>🎨 簡報架構（{slides.length} 頁，可拖曳排序）</h2>

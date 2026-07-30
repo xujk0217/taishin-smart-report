@@ -45,6 +45,7 @@ export interface PipelineResult {
   audience: AudienceContext;
   metrics: MetricSpec[];
   insights: TopicInsight[];
+  architecture: SlideArchitecture;
   unsupported: { name: string; reason: string }[];
   suggestedSlides: string[];
 }
@@ -336,7 +337,177 @@ ${dataSummary}
   return parsed.insights;
 }
 
-// ─── Full Pipeline ───────────────────────────────────────────
+// ─── Step 4: Slide Architecture Design ───────────────────────
+
+const ARCHITECTURE_SYSTEM = `你是頂級簡報架構設計師。根據報告對象、計算指標、和策略洞察，設計一份完整的簡報架構。
+
+## 設計原則
+1. **金字塔原則**：先結論再展開，每個段落有一個核心訊息
+2. **故事線**：整份報告要有邏輯的敘事弧線（現況 → 發現 → 意涵 → 行動）
+3. **報告對象導向**：根據受眾的關注點決定內容深度和重點
+4. **數據+洞察交織**：每個主題先用數據（圖表/KPI）建立事實，再用洞察解讀
+5. **視覺節奏**：數據頁與文字頁交替，避免連續多頁純文字或純圖表
+
+## 輸出格式
+回傳 JSON，每一頁都要有明確的用途和內容規劃：
+{
+  "totalPages": 12,
+  "narrative": "這份報告的敘事主軸（一句話）",
+  "sections": [
+    {
+      "title": "段落名稱",
+      "purpose": "為什麼需要這個段落（對報告對象的價值）",
+      "pages": [
+        {
+          "pageTitle": "頁面標題",
+          "layout": "cover/toc/section_title/content/backcover",
+          "purpose": "這一頁要傳達什麼",
+          "contentPlan": ["要放什麼內容（指標名/圖表類型/洞察要點/KPI）"],
+          "designNote": "視覺呈現建議"
+        }
+      ]
+    }
+  ]
+}
+
+規則：
+- 總頁數 12-18 頁
+- 第一頁必須是封面(cover)，第二頁必須是目錄(toc)
+- 最後一頁必須是封底(backcover)
+- 每個 section 開頭要有段落標題頁(section_title)
+- 每個 section 至少 2-4 頁內容
+- 結論段落要有策略建議和 KPI 總結
+- 根據報告對象的 depth 調整頁數（executive 少一點，detailed 多一點）
+只回傳 JSON。`;
+
+export interface SlideArchitecture {
+  totalPages: number;
+  narrative: string;
+  sections: {
+    title: string;
+    purpose: string;
+    pages: {
+      pageTitle: string;
+      layout: string;
+      purpose: string;
+      contentPlan: string[];
+      designNote?: string;
+    }[];
+  }[];
+}
+
+export async function designSlideArchitecture(
+  audience: AudienceContext,
+  metrics: MetricSpec[],
+  insights: TopicInsight[],
+  prompt: string,
+): Promise<SlideArchitecture> {
+  const supportedMetrics = metrics.filter(m => m.supported);
+
+  const result = await aiCall(
+    ARCHITECTURE_SYSTEM,
+    `## 報告對象
+- 受眾：${audience.audience}
+- 目的：${audience.purpose}
+- 語氣：${audience.tone}
+- 深度：${audience.depth}
+- 重點面向：${audience.focusAreas.join('、')}
+
+## 可用的計算指標（${supportedMetrics.length} 個）
+${supportedMetrics.map(m => `• ${m.name}（${m.category}）— ${m.relevanceToAudience || m.definition}`).join('\n')}
+
+## 策略洞察（${insights.length} 個）
+${insights.map(i => `• 【${i.topic}】${i.keyFinding}\n  數據：${i.dataPoints.join('、')}\n  意涵：${i.implication}\n  建議：${i.recommendation}\n  建議圖表：${i.chartSuggestion ?? '無'}`).join('\n\n')}
+
+## 使用者原始需求
+${prompt}
+
+請設計完整的簡報架構。要確保：
+1. 每個洞察都有對應的頁面
+2. 每個重要指標都有被展示
+3. 報告對象最關心的放在前面
+4. 結論段落要有具體的策略建議`,
+    10000,
+  );
+
+  const parsed = parseJSON<SlideArchitecture>(result);
+  if (!parsed?.sections?.length) {
+    // Fallback: generate from insights programmatically
+    return buildFallbackArchitecture(audience, insights);
+  }
+
+  // Validation
+  try {
+    const valResult = await aiCall(
+      `你是簡報架構審核員。檢查：
+1. 是否有封面、目錄、封底？
+2. 每個 section 是否有 section_title + content 頁？
+3. 總頁數是否在 12-18 之間？
+4. 每個洞察是否都有對應頁面？
+5. 是否有結論與建議段落？
+有問題就修正回傳，正確就原樣回傳。只回傳 JSON。`,
+      `架構：${JSON.stringify(parsed, null, 1)}`,
+      10000,
+    );
+    const validated = parseJSON<SlideArchitecture>(valResult);
+    if (validated?.sections?.length) return validated;
+  } catch { /* use original */ }
+
+  return parsed;
+}
+
+function buildFallbackArchitecture(audience: AudienceContext, insights: TopicInsight[]): SlideArchitecture {
+  const grouped = new Map<string, TopicInsight[]>();
+  for (const i of insights) {
+    const list = grouped.get(i.topic) ?? [];
+    list.push(i);
+    grouped.set(i.topic, list);
+  }
+
+  const sections = [
+    {
+      title: '封面',
+      purpose: '報告標題與基本資訊',
+      pages: [
+        { pageTitle: audience.purpose, layout: 'cover', purpose: '封面', contentPlan: ['報告標題', '副標題/日期'], designNote: '品牌背景' },
+        { pageTitle: '目錄', layout: 'toc', purpose: '全報告導覽', contentPlan: [...grouped.keys()].map(k => k), designNote: '清楚列出段落' },
+      ],
+    },
+    ...[...grouped.entries()].map(([topic, topicInsights]) => ({
+      title: topic,
+      purpose: `分析${topic}相關數據與洞察`,
+      pages: [
+        { pageTitle: topic, layout: 'section_title', purpose: '段落分隔', contentPlan: [`段落標題：${topic}`], designNote: '品牌背景+黑字' },
+        ...topicInsights.map(i => ({
+          pageTitle: `${i.topic} — 數據分析`,
+          layout: 'content',
+          purpose: i.keyFinding,
+          contentPlan: [`圖表：${i.chartSuggestion ?? 'chart'}`, ...i.dataPoints.slice(0, 2), `洞察：${i.implication}`],
+          designNote: '圖表為主，搭配洞察文字',
+        })),
+      ],
+    })),
+    {
+      title: '結論與建議',
+      purpose: '總結發現與行動建議',
+      pages: [
+        { pageTitle: '結論與策略建議', layout: 'section_title', purpose: '段落分隔', contentPlan: ['結論與策略建議'] },
+        { pageTitle: '策略建議', layout: 'content', purpose: '具體行動方案', contentPlan: insights.map(i => i.recommendation), designNote: 'KPI + bullet list' },
+      ],
+    },
+    {
+      title: '封底',
+      purpose: '結束',
+      pages: [{ pageTitle: '謝謝', layout: 'backcover', purpose: '封底', contentPlan: ['台新新光金控'] }],
+    },
+  ];
+
+  return {
+    totalPages: sections.reduce((sum, s) => sum + s.pages.length, 0),
+    narrative: `${audience.audience}的${audience.purpose}`,
+    sections,
+  };
+}
 
 export interface PipelineProgress {
   step: number;
@@ -346,8 +517,7 @@ export interface PipelineProgress {
 }
 
 /**
- * Run the full 3-step AI pipeline.
- * onProgress is called at each step transition.
+ * Run the full 4-step AI pipeline.
  */
 export async function runAIPipeline(
   prompt: string,
@@ -355,48 +525,49 @@ export async function runAIPipeline(
   dataSummary: string,
   onProgress?: (p: PipelineProgress) => void,
 ): Promise<PipelineResult> {
-  onProgress?.({ step: 1, total: 3, label: '分析簡報對象與報告方向' });
+  onProgress?.({ step: 1, total: 4, label: '分析簡報對象與報告方向' });
 
   // Step 1: Audience
   const audience = await analyzeAudience(prompt, excelSummary);
   onProgress?.({
-    step: 1, total: 3, label: '分析簡報對象與報告方向',
+    step: 1, total: 4, label: '分析簡報對象與報告方向',
     detail: `對象：${audience.audience}｜重點：${audience.focusAreas.slice(0, 3).join('、')}`,
   });
 
   // Step 2: Metrics
-  onProgress?.({ step: 2, total: 3, label: '探索與驗證分析指標' });
+  onProgress?.({ step: 2, total: 4, label: '探索與驗證分析指標' });
   const { metrics, unsupported } = await discoverMetrics(prompt, excelSummary, audience);
   onProgress?.({
-    step: 2, total: 3, label: '探索與驗證分析指標',
+    step: 2, total: 4, label: '探索與驗證分析指標',
     detail: `找到 ${metrics.filter(m => m.supported).length} 個可計算指標，${unsupported.length} 個不可行`,
   });
 
   // Step 3: Insights
-  onProgress?.({ step: 3, total: 3, label: '生成策略洞察與建議' });
+  onProgress?.({ step: 3, total: 4, label: '生成策略洞察與建議' });
   const insights = await generateInsights(prompt, dataSummary, audience, metrics);
   onProgress?.({
-    step: 3, total: 3, label: '生成策略洞察與建議',
+    step: 3, total: 4, label: '生成策略洞察與建議',
     detail: `${insights.length} 個主題洞察，涵蓋 ${[...new Set(insights.map(i => i.topic))].length} 個面向`,
   });
 
-  // Build suggested slides from insights
-  const suggestedSlides = [
-    `封面：${audience.purpose}`,
-    '目錄',
-    ...insights.flatMap(insight => [
-      `段落標題：${insight.topic}`,
-      `${insight.topic} — 數據分析（${insight.chartSuggestion ?? 'chart'}）`,
-      ...(insight.recommendation ? [`${insight.topic} — 洞察與建議`] : []),
-    ]),
-    '結論與策略建議',
-    '封底',
-  ];
+  // Step 4: Architecture Design
+  onProgress?.({ step: 4, total: 4, label: '設計簡報架構' });
+  const architecture = await designSlideArchitecture(audience, metrics, insights, prompt);
+  onProgress?.({
+    step: 4, total: 4, label: '設計簡報架構',
+    detail: `${architecture.totalPages} 頁，${architecture.sections.length} 個段落`,
+  });
+
+  // Build suggestedSlides from architecture
+  const suggestedSlides = architecture.sections.flatMap(s =>
+    s.pages.map(p => p.pageTitle)
+  );
 
   return {
     audience,
     metrics,
     insights,
+    architecture,
     unsupported,
     suggestedSlides,
   };
