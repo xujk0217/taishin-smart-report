@@ -27,12 +27,6 @@ const PROVIDERS: Provider[] = [
     model: 'deepseek-v4-flash-free',
     apiKey: () => OPENCODE_KEY,
   },
-  {
-    name: 'Groq',
-    url: 'https://api.groq.com/openai/v1/chat/completions',
-    model: 'llama-3.1-8b-instant',
-    apiKey: () => GROQ_KEY_ENV,
-  },
 ];
 
 // ─── Cache ───────────────────────────────────────────────────
