@@ -68,11 +68,10 @@ export async function callGroqWithRetry(
   }
 
   // Build provider list: skip providers without a key.
+  // Each provider uses its OWN key — the apiKey param is ignored
+  // (kept for backward compat but not used for routing).
   const activeProviders = PROVIDERS
-    .map(p => ({
-      ...p,
-      resolvedKey: p.name === 'Groq' ? (apiKey || p.apiKey()) : p.apiKey(),
-    }))
+    .map(p => ({ ...p, resolvedKey: p.apiKey() }))
     .filter(p => p.resolvedKey.length > 0);
 
   if (activeProviders.length === 0) {

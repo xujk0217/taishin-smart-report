@@ -6,6 +6,7 @@ import { AnalyzingStage } from './components/AnalyzingStage';
 import { PlanStage } from './components/PlanStage';
 import { ProcessingStage } from './components/ProcessingStage';
 import { PreviewStage } from './components/PreviewStage';
+import { SendStage } from './components/SendStage';
 import { generatePlanWithAI } from './utils/groq';
 import { readAllExcelFiles, summariesToText, type FileSummary } from './utils/excel-reader';
 import { computeMetrics, type ComputeResult } from './utils/metric-engine';
@@ -19,6 +20,7 @@ const STEPS: { key: AppStage; label: string }[] = [
   { key: 'processing', label: '④ 執行' },
   { key: 'preview', label: '⑤ 預覽編輯' },
   { key: 'exporting', label: '⑥ 輸出' },
+  { key: 'sending', label: '⑦ 寄送' },
 ];
 
 function App() {
@@ -83,9 +85,16 @@ function App() {
       })
       .catch(err => {
         console.error('AI plan generation failed:', err);
-        // Fallback to mock plan
-        setPlan(generateMockPlan(userPrompt));
-        setStage('plan');
+        // Show error to user, don't silently use mock
+        const useMock = confirm(
+          `AI 分析暫時無法使用（${err?.message?.slice(0, 60) ?? '連線逾時'}）。\n\n按「確定」使用範例計劃繼續，按「取消」返回重試。`
+        );
+        if (useMock) {
+          setPlan(generateMockPlan(userPrompt));
+          setStage('plan');
+        } else {
+          setStage('upload');
+        }
       });
   }, []);
 
@@ -116,9 +125,16 @@ function App() {
 
         setProgress(100);
         setStage('preview');
-      } catch (err) {
+      } catch (err: any) {
         console.error('[App] Processing failed:', err);
-        setStage('preview'); // Show whatever we have
+        const useFallback = confirm(
+          `AI 簡報規劃失敗（${err?.message?.slice(0, 60) ?? '逾時'}）。\n\n按「確定」使用範例簡報，按「取消」返回計劃頁。`
+        );
+        if (useFallback) {
+          setStage('preview');
+        } else {
+          setStage('plan');
+        }
       }
     })();
   }, [prompt]);
@@ -160,7 +176,7 @@ function App() {
         </div>
       </header>
 
-      <main className={`main${stage === 'preview' || stage === 'exporting' ? ' main-wide' : ''}`}>
+      <main className={`main${stage === 'preview' || stage === 'exporting' || stage === 'sending' ? ' main-wide' : ''}`}>
         {/* Step indicator */}
         <div className="steps">
           {STEPS.map(s => (
@@ -192,6 +208,14 @@ function App() {
             onSlideChange={(index, slide) =>
               setSlideSpecs(prev => prev.map((s, i) => (i === index ? slide : s)))
             }
+            onSend={() => setStage('sending')}
+          />
+        )}
+        {stage === 'sending' && (
+          <SendStage
+            slideCount={slideSpecs.length}
+            onBack={() => setStage('preview')}
+            onDone={() => setStage('upload')}
           />
         )}
       </main>
