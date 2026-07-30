@@ -8,7 +8,7 @@ export type BackgroundTemplate = '001' | '002' | '003';
 // 002 = 內文/圖表 (clean white for data)
 // 003 = 封底
 
-export type LayoutType = 'cover' | 'section_title' | 'content' | 'backcover';
+export type LayoutType = 'cover' | 'toc' | 'section_title' | 'content' | 'backcover';
 
 export type ElementType =
   | 'title'

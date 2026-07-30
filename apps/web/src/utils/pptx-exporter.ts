@@ -89,15 +89,20 @@ export async function exportPptx(
     const bgData = backgrounds[spec.background];
 
     if (bgData) {
-      slide.addImage({ data: bgData, x: 0, y: 0, w: SLIDE_W, h: SLIDE_H });
+      try {
+        slide.addImage({ data: bgData, x: 0, y: 0, w: SLIDE_W, h: SLIDE_H });
+      } catch {
+        // If image fails, use solid color fallback
+        slide.background = { color: spec.background === '002' ? BRAND.white : 'F8E8E8' };
+      }
     } else {
-      slide.background = { color: spec.background === '002' ? BRAND.white : BRAND.primary };
+      slide.background = { color: spec.background === '002' ? BRAND.white : 'F8E8E8' };
     }
 
     const onDark = spec.background !== '002';
 
     if (spec.layout === 'cover' || spec.layout === 'section_title' || spec.layout === 'backcover') {
-      renderCentered(slide, spec, onDark);
+      renderCentered(slide, spec);
     } else {
       renderContent(slide, spec, result);
     }
@@ -127,10 +132,12 @@ function findTitle(slides: SlideSpec[]): string | undefined {
 
 // ─── Centered layouts (cover / section title / back cover) ───
 
-function renderCentered(slide: any, spec: SlideSpec, onDark: boolean) {
+function renderCentered(slide: any, spec: SlideSpec) {
   const title = spec.elements.find(e => e.type === 'title');
   const subtitle = spec.elements.find(e => e.type === 'subtitle');
-  const color = onDark ? BRAND.white : BRAND.primary;
+  // Black titles on cover/section/backcover per user request
+  const color = BRAND.text;
+  const subColor = BRAND.textLight;
 
   const hasSub = Boolean(subtitle?.content);
   // Title box is vertically centered; subtitle sits directly under it.
@@ -148,7 +155,7 @@ function renderCentered(slide: any, spec: SlideSpec, onDark: boolean) {
     slide.addText(subtitle!.content!, {
       x: MARGIN, y: titleY + titleH + 0.1, w: CONTENT_W, h: 0.8,
       fontSize: 16, fontFace: BRAND.font,
-      color: onDark ? BRAND.white : BRAND.textLight,
+      color: subColor,
       align: 'center', valign: 'top',
     });
   }

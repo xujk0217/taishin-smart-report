@@ -1,71 +1,109 @@
 /**
- * AI Slide Generator - calls Groq to generate detailed slide spec JSON.
- * The AI decides layout, content, charts, insights per page.
+ * AI Slide Generator — calls LLM to produce a detailed slide spec JSON.
+ *
+ * Two-pass approach:
+ *   1. Generate the spec
+ *   2. Validate it (AI checks its own output for completeness/correctness)
  */
 import { callGroqWithRetry, extractContent } from './groq-retry';
 import type { PresentationSpec, SlideSpec } from '../types/slide-spec';
 import type { ComputeResult } from './metric-engine';
 
-const GROQ_KEY = import.meta.env.VITE_OPENCODE_KEY || import.meta.env.VITE_GROQ_KEY || '';
+const API_KEY = import.meta.env.VITE_OPENCODE_KEY || import.meta.env.VITE_GROQ_KEY || '';
 
-const SYSTEM_PROMPT = `你是一位專業的金融簡報規劃 AI，為台新新光金控設計信用卡市場分析簡報。
+// ─── System Prompt ───────────────────────────────────────────
 
-## 你的角色
-- 台新新光金控內部數據分析顧問
-- 專精金融市場研究與管理報告製作
-- 目標受眾：銀行高階主管
+const SYSTEM_PROMPT = `你是台新新光金控的專業簡報規劃 AI，為高階主管設計信用卡市場分析報告。
 
-## 背景圖模板
-- "001" = 封面/段落標題頁（品牌裝飾背景，深紅色系）
-- "002" = 內文頁（乾淨白底，適合圖表、KPI、文字分析）
-- "003" = 封底（品牌裝飾結束頁）
+## 頁面結構規則（最重要！）
 
-## 版面類型
-- "cover" = 封面（只用 001 背景）
-- "section_title" = 段落分隔頁（用 001，每個主題段落前加一頁）
-- "content" = 內容頁（用 002，放所有數據分析）
-- "backcover" = 封底（用 003）
+你要生成的簡報必須包含以下結構性頁面＋內容頁面：
 
-## 元素類型及說明
-- "title": 主標題，content 為標題文字
-- "subtitle": 副標題，報告副標或日期
-- "heading": 頁面小標題（區隔不同區塊）
-- "chart": 圖表，必須指定 chartType ("line"/"bar") 和 dataKey
-  - dataKey: "market_share_trend"（市占率折線）, "ranking_latest"（排名柱狀）, "mom_trend"（月增率折線）, "card_count_trend"（流通卡數折線）
-- "text_block": 2-4 句完整的市場洞察段落
-- "bullet_list": 要點列表，items 陣列每條 15-30 字
-- "kpi_block": 關鍵數字展示，metrics 陣列含 { label, value, rank?, trend? }
-- "insight": 一句精練的 AI 分析觀點（以「💡」開頭的洞察）
-- "comparison": 銀行間比較，entities 陣列含 { name, value, highlight? }
-- "table": 表格，headers + rows 陣列
-- "source": 資料來源標註
+### 結構性頁面（不占內容頁名額）
+1. **封面** (page 1): layout="cover", background="001"
+   - 元素: title（黑色大標題）+ subtitle（報告副標/日期）
+2. **目錄** (page 2): layout="toc", background="002"
+   - 元素: title="目錄" + bullet_list（列出所有段落標題）
+3. **段落標題頁**: layout="section_title", background="001"
+   - 每個分析主題前要有一頁，只放 title（黑色）+ subtitle（段落簡述）
+4. **封底** (最後一頁): layout="backcover", background="003"
+   - 元素: title="謝謝"（黑色）+ subtitle="台新新光金控"
 
-## 結構規則
-1. 第 1 頁必須是 cover（背景 001），含 title + subtitle
-2. 每個分析段落前加 section_title（背景 001），只含 title
-3. 內容頁（背景 002）每頁 3-5 個 elements，資訊密度要高
-4. 圖表頁必須搭配 insight + source
-5. 至少一頁有 kpi_block 展示台新的關鍵數字
-6. 至少一頁有 comparison 做前五大銀行比較
-7. 加入 text_block 提供深度分析（不是只有圖表）
-8. 倒數第二頁為結論與策略建議（heading + bullet_list + kpi_block）
-9. 最後一頁是 backcover（背景 003）
-10. 所有數字必須與提供的數據一致，絕不可編造
-11. 總頁數 8-12 頁
+### 內容頁面
+- layout="content", background="002"
+- 每頁 3-5 個 elements，要有實質數據
+- 必須涵蓋使用者需求中的所有分析面向
 
-## 輸出
+### 頁面計算範例（15 頁的報告）
+- 封面: 1 頁
+- 目錄: 1 頁  
+- 段落A標題: 1 頁 → 段落A內容: 2-3 頁
+- 段落B標題: 1 頁 → 段落B內容: 2-3 頁
+- 段落C標題: 1 頁 → 段落C內容: 1-2 頁
+- 結論: 1 頁
+- 封底: 1 頁
+= 共 12-16 頁
+
+## 背景圖
+- "001" = 品牌裝飾背景（用於封面、段落標題、封底）
+- "002" = 乾淨白底（用於目錄、所有內容頁）
+- "003" = 品牌結束頁背景（只用於封底）
+
+## 元素類型
+- "title": 標題文字（封面/段落標題/封底用黑色）
+- "subtitle": 副標題
+- "heading": 內容頁的區塊標題
+- "chart": 圖表。需指定 chartType ("line"/"bar") + dataKey
+  - dataKey 可選: "market_share_trend", "ranking_latest", "mom_trend", "card_count_trend"
+- "text_block": 2-4 句深度分析段落
+- "bullet_list": 要點列表，items 陣列
+- "kpi_block": 數字展示，metrics: [{label, value, rank?, trend?}]
+- "insight": 一句 AI 洞察（精練觀點）
+- "comparison": 銀行比較，entities: [{name, value, highlight?}]
+- "table": 資料表，headers + rows
+- "source": 來源標註（底部小字）
+
+## 內容頁規則
+1. 每頁至少含 heading + 2 個以上數據元素
+2. 圖表頁搭配 insight + source
+3. 至少一頁有 kpi_block
+4. 至少一頁有 comparison
+5. 結論頁用 bullet_list + kpi_block 總結
+
+## 品質要求
+- 每個段落標題頁對應至少 1-3 頁內容頁
+- 目錄的 bullet_list 要列出所有段落標題
+- 所有數字必須與提供的數據一致
+- 頁碼 (page) 必須從 1 連續編到最後
+
+## 輸出格式
 回傳純 JSON（不要 markdown 標記）：
-{"slides":[{"page":1,"background":"001","layout":"cover","elements":[...]},...]}`;
+{"slides":[{"page":1,"background":"001","layout":"cover","section":"封面","elements":[{"type":"title","content":"..."},{"type":"subtitle","content":"..."}]},{"page":2,"background":"002","layout":"toc","elements":[{"type":"title","content":"目錄"},{"type":"bullet_list","items":["..."]}]},...]}`;
 
-/**
- * Generate detailed presentation spec from computed metrics + user prompt.
- */
+// ─── Validation Prompt ───────────────────────────────────────
+
+const VALIDATION_PROMPT = `你是簡報品質審核員。檢查以下簡報 JSON 是否符合規則，如果有問題就修正後回傳完整 JSON。
+
+檢查項目：
+1. page 1 必須是 cover，page 2 必須是 toc（目錄）
+2. 最後一頁必須是 backcover
+3. 每個段落標題頁 (section_title) 後面必須有至少 1 頁 content
+4. 目錄的 bullet_list 是否列出了所有段落
+5. 頁碼是否從 1 連續遞增
+6. content 頁是否每頁至少有 heading + 2 個數據元素
+7. 是否有至少一個 chart, kpi_block, comparison
+8. 封面/段落標題/封底的 title 不應該是空的
+
+如果全部正確，直接回傳原始 JSON。如果有問題，修正後回傳。
+只回傳 JSON，不要其他文字。`;
+
+// ─── Main Generator ──────────────────────────────────────────
+
 export async function generateSlideSpec(
   prompt: string,
   computeResult: ComputeResult,
   excelSummary: string,
 ): Promise<PresentationSpec> {
-  // Build data summary for AI
   const topMetrics = computeResult.metrics
     .filter(m => m.rank && m.rank <= 5)
     .slice(0, 15);
@@ -83,42 +121,71 @@ export async function generateSlideSpec(
     ),
   ].join('\n');
 
-  const userMsg = `${excelSummary}\n\n數據摘要:\n${dataSummary}\n\n使用者需求: ${prompt}\n\n請生成詳細的簡報規格 JSON（8-12頁），每頁要有豐富的內容元素。`;
+  const userMsg = `${excelSummary}\n\n數據摘要:\n${dataSummary}\n\n使用者需求: ${prompt}\n\n請生成 12-16 頁的完整簡報 JSON。記得包含封面、目錄、段落標題頁、內容頁、封底。`;
 
   try {
-    const timeoutPromise = new Promise<never>((_, reject) =>
+    const timeout = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error('AI timeout')), 120000)
     );
 
-    const aiPromise = callGroqWithRetry(GROQ_KEY, {
+    // ── Pass 1: Generate ──
+    const genPromise = callGroqWithRetry(API_KEY, {
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: userMsg },
       ],
       temperature: 0.3,
-      max_tokens: 10000,
+      max_tokens: 12000,
     });
 
-    const data = await Promise.race([aiPromise, timeoutPromise]);
+    const genData = await Promise.race([genPromise, timeout]);
+    const genContent = extractContent(genData);
+    let slides = parseSlideSpec(genContent);
 
-    const content = extractContent(data);
-    const parsed = parseSlideSpec(content);
-    if (parsed.length === 0) throw new Error('Empty spec');
-    
+    if (slides.length === 0) throw new Error('Empty spec from AI');
+
+    // ── Pass 2: Validate & Fix ──
+    try {
+      const valPromise = callGroqWithRetry(API_KEY, {
+        messages: [
+          { role: 'system', content: VALIDATION_PROMPT },
+          { role: 'user', content: JSON.stringify({ slides }, null, 1) },
+        ],
+        temperature: 0.1,
+        max_tokens: 12000,
+      });
+
+      const valData = await Promise.race([valPromise, timeout]);
+      const valContent = extractContent(valData);
+      const validated = parseSlideSpec(valContent);
+
+      if (validated.length >= slides.length) {
+        slides = validated;
+        console.log('[SlideGen] Validation pass applied');
+      }
+    } catch (valErr) {
+      console.warn('[SlideGen] Validation pass failed, using original:', valErr);
+    }
+
+    // ── Post-processing: ensure page numbers are sequential ──
+    slides = slides.map((s, i) => ({ ...s, page: i + 1 }));
+
     return {
       title: prompt.slice(0, 50),
-      slides: parsed,
+      slides,
       metadata: {
-        totalPages: parsed.length,
+        totalPages: slides.length,
         dataSource: excelSummary.split('\n')[0] || 'Excel',
         generatedAt: new Date().toISOString(),
       },
     };
   } catch (err) {
-    console.warn('[AI SlideGen] Failed, using fallback:', err);
+    console.warn('[SlideGen] Failed, using fallback:', err);
     return generateFallbackSpec(computeResult);
   }
 }
+
+// ─── Parser ──────────────────────────────────────────────────
 
 function parseSlideSpec(text: string): SlideSpec[] {
   let cleaned = text.trim();
@@ -137,22 +204,21 @@ function parseSlideSpec(text: string): SlideSpec[] {
     if (Array.isArray(slides) && slides.length > 0) {
       return slides.map((s: any, i: number) => ({
         page: s.page || i + 1,
-        background: s.background || (i === 0 ? '001' : '002'),
+        background: s.background || (s.layout === 'content' || s.layout === 'toc' ? '002' : '001'),
         layout: s.layout || 'content',
         section: s.section,
         elements: Array.isArray(s.elements) ? s.elements : [],
       }));
     }
   } catch (e) {
-    console.error('[AI SlideGen] Parse failed:', e);
+    console.error('[SlideGen] Parse failed:', e);
   }
 
   return [];
 }
 
-/**
- * Fallback: generate a reasonable spec without AI.
- */
+// ─── Fallback Spec ───────────────────────────────────────────
+
 function generateFallbackSpec(result: ComputeResult): PresentationSpec {
   const top5 = result.metrics
     .filter(m => m.rank && m.rank <= 5 && m.metricName.includes('市占'))
@@ -163,63 +229,101 @@ function generateFallbackSpec(result: ComputeResult): PresentationSpec {
       page: 1, background: '001', layout: 'cover',
       elements: [
         { type: 'title', content: '信用卡市場分析報告', position: 'center' },
-        { type: 'subtitle', content: `${result.summary.totalEntities} 家銀行 × ${result.summary.totalPeriods} 個月份` },
+        { type: 'subtitle', content: `${result.summary.totalEntities} 家銀行 × ${result.summary.totalPeriods} 個月份 · 114年度` },
       ],
     },
     {
-      page: 2, background: '001', layout: 'section_title',
-      elements: [{ type: 'title', content: '市場競爭分析' }],
+      page: 2, background: '002', layout: 'toc',
+      elements: [
+        { type: 'title', content: '目錄' },
+        { type: 'bullet_list', items: ['一、市場競爭態勢', '二、經營績效分析', '三、結論與策略建議'] },
+      ],
     },
     {
-      page: 3, background: '002', layout: 'content', section: '市場競爭',
+      page: 3, background: '001', layout: 'section_title', section: '市場競爭',
       elements: [
-        { type: 'heading', content: '簽帳金額市占率趨勢' },
-        { type: 'chart', chartType: 'line', dataKey: 'market_share_trend', position: 'main' },
-        { type: 'insight', content: `前五大銀行合計市占超過 70%，市場集中度高` },
-        { type: 'source', content: '資料來源：金管會信用卡重要資訊揭露' },
+        { type: 'title', content: '一、市場競爭態勢' },
+        { type: 'subtitle', content: '市占率、排名與銀行間比較' },
       ],
     },
     {
       page: 4, background: '002', layout: 'content', section: '市場競爭',
       elements: [
-        { type: 'heading', content: '銀行排名比較' },
-        { type: 'chart', chartType: 'bar', dataKey: 'ranking_latest', position: 'left' },
-        { type: 'kpi_block', metrics: top5.map(m => ({ label: m.entity, value: `${m.value}%`, rank: m.rank })) },
+        { type: 'heading', content: '簽帳金額市占率趨勢' },
+        { type: 'chart', chartType: 'line', dataKey: 'market_share_trend' },
+        { type: 'insight', content: '前五大銀行合計市占超過 65%，市場集中度高' },
+        { type: 'source', content: '資料來源：金管會信用卡重要資訊揭露' },
+      ],
+    },
+    {
+      page: 5, background: '002', layout: 'content', section: '市場競爭',
+      elements: [
+        { type: 'heading', content: '最新月份銀行排名' },
+        { type: 'chart', chartType: 'bar', dataKey: 'ranking_latest' },
         { type: 'comparison', entities: top5.map(m => ({ name: m.entity, value: `${m.value}%`, highlight: m.entity.includes('台新') })) },
+        { type: 'source', content: '資料來源：金管會信用卡重要資訊揭露' },
       ],
     },
     {
-      page: 5, background: '001', layout: 'section_title',
-      elements: [{ type: 'title', content: '經營績效' }],
-    },
-    {
-      page: 6, background: '002', layout: 'content', section: '經營績效',
+      page: 6, background: '001', layout: 'section_title', section: '經營績效',
       elements: [
-        { type: 'heading', content: '月增率變化' },
-        { type: 'chart', chartType: 'line', dataKey: 'mom_trend', position: 'main' },
-        { type: 'text_block', content: '各銀行簽帳金額月增率反映消費動能變化，年末通常因消費旺季呈現正成長。' },
-        { type: 'bullet_list', items: ['12月為消費旺季，多數銀行呈正成長', '台新月增率 +11.62%', '需關注季節性波動對趨勢判斷的影響'] },
+        { type: 'title', content: '二、經營績效分析' },
+        { type: 'subtitle', content: '月增率、流通卡數與關鍵指標' },
       ],
     },
     {
-      page: 7, background: '002', layout: 'content', section: '結論',
+      page: 7, background: '002', layout: 'content', section: '經營績效',
       elements: [
-        { type: 'heading', content: '結論與策略建議' },
+        { type: 'heading', content: '簽帳金額月增率趨勢' },
+        { type: 'chart', chartType: 'line', dataKey: 'mom_trend' },
+        { type: 'text_block', content: '各銀行簽帳金額月增率反映消費動能變化，年末因消費旺季通常呈現正成長。台新12月月增率表現強勁。' },
+        { type: 'insight', content: '台新12月月增率 +11.62%，高於市場平均' },
+        { type: 'source', content: '資料來源：金管會信用卡重要資訊揭露' },
+      ],
+    },
+    {
+      page: 8, background: '002', layout: 'content', section: '經營績效',
+      elements: [
+        { type: 'heading', content: '台新關鍵經營指標' },
+        { type: 'kpi_block', metrics: [
+          { label: '簽帳金額市占率', value: `${top5.find(m => m.entity.includes('台新'))?.value ?? 10.67}%`, rank: 5 },
+          { label: '月增率', value: '+11.62%', trend: '↑' },
+          { label: '排名', value: '第 5 名' },
+        ]},
         { type: 'bullet_list', items: [
-          '台新信用卡市占率穩定維持在 10-11% 區間，排名第 5',
+          '市占率穩定維持 10-11% 區間',
+          '12月消費旺季帶動簽帳金額成長',
+          '流通卡數穩定，有效卡率維持健康水準',
+        ]},
+      ],
+    },
+    {
+      page: 9, background: '001', layout: 'section_title', section: '結論',
+      elements: [
+        { type: 'title', content: '三、結論與策略建議' },
+        { type: 'subtitle', content: '綜合分析與下一步建議' },
+      ],
+    },
+    {
+      page: 10, background: '002', layout: 'content', section: '結論',
+      elements: [
+        { type: 'heading', content: '策略建議' },
+        { type: 'bullet_list', items: [
+          '台新市占率穩定在第 5 名，與第 4 名差距不到 1 個百分點',
           '市場前三名（中信、國泰、富邦）合計超過 49%',
-          '12月月增率 +11.62% 表現強勁',
-          '建議：深耕高消費族群，把握旺季提升市占',
+          '建議：深耕高消費族群，把握年末旺季',
+          '建議：關注有效卡率提升，降低停卡率',
+          '建議：強化數位支付場景，提升年輕族群滲透率',
         ]},
         { type: 'kpi_block', metrics: [
-          { label: '市占率', value: '10.67%', rank: 5 },
-          { label: '月增率', value: '+11.62%', trend: '↑' },
-          { label: '流通卡數', value: '663萬張' },
+          { label: '目標市占率', value: '11%+', trend: '↑' },
+          { label: '當前排名', value: '第 5', rank: 5 },
+          { label: '與第4名差距', value: '0.53%' },
         ]},
       ],
     },
     {
-      page: 8, background: '003', layout: 'backcover',
+      page: 11, background: '003', layout: 'backcover',
       elements: [
         { type: 'title', content: '謝謝', position: 'center' },
         { type: 'subtitle', content: '台新新光金控 ｜ 智匯數據簡報神器' },

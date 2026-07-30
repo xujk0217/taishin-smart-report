@@ -107,7 +107,9 @@ function CenteredLayout({ spec, onDark }: { spec: SlideSpec; onDark: boolean }) 
   const title = spec.elements.find(e => e.type === 'title');
   const subtitle = spec.elements.find(e => e.type === 'subtitle');
   const extras = spec.elements.filter(e => e.type !== 'title' && e.type !== 'subtitle');
-  const color = onDark ? '#FFFFFF' : '#C0392B';
+  // Cover, section_title, backcover: use BLACK titles per user request
+  const titleColor = '#222222';
+  const subColor = '#555555';
 
   return (
     <div
@@ -125,10 +127,9 @@ function CenteredLayout({ spec, onDark }: { spec: SlideSpec; onDark: boolean }) 
         style={{
           fontSize: spec.layout === 'cover' ? 54 : 46,
           fontWeight: 800,
-          color,
+          color: titleColor,
           lineHeight: 1.25,
           letterSpacing: '-0.01em',
-          textShadow: onDark ? '0 2px 12px rgba(0,0,0,0.25)' : 'none',
         }}
       >
         {title?.content ?? spec.section ?? ''}
@@ -138,7 +139,7 @@ function CenteredLayout({ spec, onDark }: { spec: SlideSpec; onDark: boolean }) 
         <div
           style={{
             fontSize: 22,
-            color: onDark ? 'rgba(255,255,255,0.9)' : '#7F8C8D',
+            color: subColor,
             fontWeight: 400,
           }}
         >
@@ -147,7 +148,7 @@ function CenteredLayout({ spec, onDark }: { spec: SlideSpec; onDark: boolean }) 
       )}
 
       {extras.map((el, i) => (
-        <div key={i} style={{ fontSize: 19, color, opacity: 0.92, maxWidth: 880 }}>
+        <div key={i} style={{ fontSize: 19, color: '#333', opacity: 0.92, maxWidth: 880 }}>
           {el.type === 'bullet_list'
             ? el.items?.join('　·　')
             : el.content}
