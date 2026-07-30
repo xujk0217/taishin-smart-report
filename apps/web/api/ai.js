@@ -16,30 +16,21 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const OPENCODE_KEY = process.env.VITE_OPENCODE_KEY || process.env.OPENCODE_KEY || '';
-  // Fallback: if server env not set, accept key from client Authorization header
-  const clientKey = (req.headers.authorization || '').replace('Bearer ', '');
-  const apiKey = OPENCODE_KEY || clientKey;
-
-  if (!apiKey) {
-    return res.status(500).json({ error: 'No API key available' });
+  const OPENCODE_KEY = process.env.VITE_OPENCODE_KEY || '';
+  if (!OPENCODE_KEY) {
+    return res.status(500).json({ error: 'VITE_OPENCODE_KEY not configured' });
   }
 
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 280000); // 280s timeout for upstream
-
     const upstream = await fetch('https://opencode.ai/zen/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
+        'Authorization': `Bearer ${OPENCODE_KEY}`,
       },
       body: JSON.stringify(req.body),
-      signal: controller.signal,
     });
 
-    clearTimeout(timer);
     const data = await upstream.json();
 
     res.setHeader('Access-Control-Allow-Origin', '*');
