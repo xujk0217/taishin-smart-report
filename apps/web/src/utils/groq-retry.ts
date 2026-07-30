@@ -23,9 +23,9 @@ const GROQ_KEY_ENV = import.meta.env.VITE_GROQ_KEY || '';
 const PROVIDERS: Provider[] = [
   {
     name: 'OpenCode',
-    url: 'https://opencode.ai/zen/v1/chat/completions',
+    url: '/api/ai',  // Vercel serverless proxy (bypasses CORS)
     model: 'deepseek-v4-flash-free',
-    apiKey: () => OPENCODE_KEY,
+    apiKey: () => OPENCODE_KEY || 'proxy',  // Key is on server side; 'proxy' ensures provider isn't skipped
   },
 ];
 

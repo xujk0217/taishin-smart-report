@@ -4,7 +4,8 @@ export type AppStage =
   | 'plan'          // 顯示計劃給使用者確認
   | 'processing'    // 執行計算、AI 洞察
   | 'preview'       // 預覽簡報 + 編輯
-  | 'exporting';    // 輸出最終 PPTX
+  | 'exporting'     // 輸出最終 PPTX
+  | 'sending';      // 模擬寄送
 
 export interface FormulaPlanItem {
   id: string;

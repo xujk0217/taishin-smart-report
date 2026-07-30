@@ -321,3 +321,9 @@ body {
   .preview-layout { grid-template-columns: 1fr; }
   .slide-nav { flex-direction: row; overflow-x: auto; max-height: none; }
 }
+
+/* Voice input mic pulse */
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(192, 27, 43, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(192, 27, 43, 0); }
+}

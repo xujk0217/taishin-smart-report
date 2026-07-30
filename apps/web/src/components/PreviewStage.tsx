@@ -5,6 +5,7 @@ import { traceElement, type ElementProvenance } from '../utils/provenance';
 import { editSlide, type EditResult } from '../utils/slide-editor';
 import { SlideCanvas } from './SlideCanvas';
 import { DataInspector } from './DataInspector';
+import { VoiceButton } from './VoiceButton';
 
 interface Props {
   slides: SlideSpec[];
@@ -13,6 +14,8 @@ interface Props {
   exporting: boolean;
   /** Replaces one slide after a successful natural-language edit. */
   onSlideChange?: (index: number, slide: SlideSpec) => void;
+  /** Navigates to the simulated-send stage. */
+  onSend?: () => void;
 }
 
 type Tab = 'slides' | 'data';
@@ -37,7 +40,7 @@ const KIND_BADGE: Record<ElementProvenance['kind'], { cls: string; label: string
   static: { cls: 'badge-warning', label: '版面' },
 };
 
-export function PreviewStage({ slides, computeResult, onExport, exporting, onSlideChange }: Props) {
+export function PreviewStage({ slides, computeResult, onExport, exporting, onSlideChange, onSend }: Props) {
   const [tab, setTab] = useState<Tab>('slides');
   const [activeSlide, setActiveSlide] = useState(0);
   const [selectedEl, setSelectedEl] = useState<number | null>(null);
@@ -181,6 +184,11 @@ export function PreviewStage({ slides, computeResult, onExport, exporting, onSli
             <button className="btn btn-primary" onClick={onExport} disabled={exporting}>
               {exporting ? '匯出中...' : '匯出 PPTX'}
             </button>
+            {onSend && (
+              <button className="btn btn-secondary" onClick={onSend}>
+                📨 模擬寄送
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -255,6 +263,7 @@ export function PreviewStage({ slides, computeResult, onExport, exporting, onSli
                   onKeyDown={e => { if (e.key === 'Enter') runEdit(); }}
                   disabled={editing}
                 />
+                <VoiceButton onResult={text => setInstruction(prev => prev + text)} />
                 <button
                   className="btn btn-secondary"
                   onClick={runEdit}

@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { VoiceButton } from './VoiceButton';
 
 interface Props {
   onComplete: (files: File[], prompt: string) => void;
@@ -84,14 +85,18 @@ export function UploadStage({ onComplete }: Props) {
         <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, fontSize: '0.9rem' }}>
           📝 分析需求（告訴 AI 你想要什麼）
         </label>
-        <textarea
-          className="textarea"
-          value={prompt}
-          onChange={e => setPrompt(e.target.value)}
-          placeholder="例如：分析台新信用卡 114 年市占率趨勢，比較前五大銀行表現，並產生管理報告..."
-        />
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
+          <textarea
+            className="textarea"
+            style={{ flex: 1 }}
+            value={prompt}
+            onChange={e => setPrompt(e.target.value)}
+            placeholder="例如：分析台新信用卡 114 年市占率趨勢，比較前五大銀行表現，並產生管理報告..."
+          />
+          <VoiceButton onResult={text => setPrompt(prev => prev + text)} />
+        </div>
         <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-          AI 會根據你的需求分析 Excel 資料，自動決定計算方式與簡報架構
+          AI 會根據你的需求分析 Excel 資料，自動決定計算方式與簡報架構。支援語音輸入 🎤
         </div>
       </div>
 
