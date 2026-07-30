@@ -22,6 +22,9 @@ export default async function handler(req, res) {
   }
 
   try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 280000); // 280s timeout for upstream
+
     const upstream = await fetch('https://opencode.ai/zen/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -29,8 +32,10 @@ export default async function handler(req, res) {
         'Authorization': `Bearer ${OPENCODE_KEY}`,
       },
       body: JSON.stringify(req.body),
+      signal: controller.signal,
     });
 
+    clearTimeout(timer);
     const data = await upstream.json();
 
     res.setHeader('Access-Control-Allow-Origin', '*');
