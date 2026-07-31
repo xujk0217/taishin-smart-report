@@ -15,14 +15,14 @@ export function UploadStage({ onComplete }: Props) {
   const handleFiles = (fileList: FileList | null) => {
     if (!fileList) return;
     setError('');
-    const xlsxFiles = Array.from(fileList).filter(f =>
-      f.name.endsWith('.xlsx') || f.name.endsWith('.xlsm') || f.name.endsWith('.xls')
+    const supported = Array.from(fileList).filter(f =>
+      /\.(xlsx|xlsm|xls|csv|tsv|pdf)$/i.test(f.name)
     );
-    if (xlsxFiles.length === 0 && fileList.length > 0) {
-      setError('請上傳 .xlsx 或 .xlsm 格式的 Excel 檔案');
+    if (supported.length === 0 && fileList.length > 0) {
+      setError('請上傳 Excel、CSV 或 PDF 格式的檔案');
       return;
     }
-    setFiles(prev => [...prev, ...xlsxFiles]);
+    setFiles(prev => [...prev, ...supported]);
   };
 
   const handleSubmit = () => {
@@ -45,7 +45,7 @@ export function UploadStage({ onComplete }: Props) {
         <input
           ref={inputRef}
           type="file"
-          accept=".xlsx,.xlsm,.xls"
+          accept=".xlsx,.xlsm,.xls,.csv,.tsv,.pdf"
           multiple
           onChange={e => handleFiles(e.target.files)}
         />
@@ -54,7 +54,7 @@ export function UploadStage({ onComplete }: Props) {
           {files.length > 0 ? `已選擇 ${files.length} 個檔案` : '拖曳 Excel 檔案到此，或點擊上傳'}
         </div>
         <div style={{ color: 'var(--text-muted)', marginTop: '0.4rem', fontSize: '0.85rem' }}>
-          支援 .xlsx、.xlsm 格式
+          支援 .xlsx、.csv、.pdf 格式
         </div>
       </div>
 

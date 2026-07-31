@@ -10,7 +10,8 @@ import { SendStage } from './components/SendStage';
 import { generatePlanWithAI } from './utils/groq';
 import { runAIPipeline, type PipelineResult } from './utils/ai-pipeline';
 import { checkAIEndpoint } from './utils/groq-retry';
-import { readAllExcelFiles, summariesToText, type FileSummary } from './utils/excel-reader';
+import { readAllFiles } from './utils/file-reader';
+import { summariesToText, type FileSummary } from './utils/excel-reader';
 import { computeMetrics, type ComputeResult } from './utils/metric-engine';
 import { generateSlideSpec } from './utils/ai-slide-generator';
 import { isMonthlyFileSet, mergeMonthlyFiles } from './utils/multi-file-merger';
@@ -73,7 +74,7 @@ function App() {
     checkAIEndpoint()
       .then(problem => {
         if (problem) throw new Error(problem);
-        return readAllExcelFiles(uploadedFiles);
+        return readAllFiles(uploadedFiles);
       })
       .then(summaries => {
         let processedSummaries = summaries;

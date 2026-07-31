@@ -18,6 +18,8 @@
     "@smart-report/contracts": "file:../../packages/contracts",
     "chart.js": "^4.5.1",
     "file-saver": "^2.0.5",
+    "papaparse": "^5.5.4",
+    "pdfjs-dist": "^5.6.205",
     "pptxgenjs": "^4.0.1",
     "react": "^18.3.1",
     "react-chartjs-2": "^5.3.1",
@@ -26,6 +28,7 @@
   },
   "devDependencies": {
     "@types/file-saver": "^2.0.7",
+    "@types/papaparse": "^5.5.2",
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^4.7.0",

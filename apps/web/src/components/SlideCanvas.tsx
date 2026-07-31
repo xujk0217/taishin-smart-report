@@ -68,7 +68,7 @@ export function SlideCanvas({
           flexDirection: 'column',
           justifyContent: centered ? 'center' : 'flex-start',
           alignItems: centered ? 'center' : 'stretch',
-          padding: centered ? '80px 90px' : '58px 84px 56px',
+          padding: centered ? '60px 70px' : '44px 56px 40px',
         }}
       >
         {centered ? (
@@ -200,7 +200,7 @@ function ContentLayout({
   );
 
   return (
-    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', gap: 8 }}>
       {heading && (
         <div style={{ flexShrink: 0 }}>
           {wrap(headingIdx, <ElementView el={heading} computeResult={computeResult} thumbnail={thumbnail} />)}
@@ -209,11 +209,11 @@ function ContentLayout({
 
       {useSidebar ? (
         <>
-          <div style={{ display: 'flex', gap: 22, flex: 1, minHeight: 0 }}>
+          <div style={{ display: 'flex', gap: 16, flex: 1, minHeight: 0 }}>
             <div style={{ flex: '0 0 58%', minWidth: 0 }}>
               {wrap(
                 chartEntry!.i,
-                <ElementView el={chartEntry!.el} computeResult={computeResult} thumbnail={thumbnail} chartHeight={330} />,
+                <ElementView el={chartEntry!.el} computeResult={computeResult} thumbnail={thumbnail} chartHeight={260} />,
               )}
             </div>
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
@@ -253,7 +253,7 @@ function ElementView({
   switch (el.type) {
     case 'title':
       return (
-        <div style={{ fontSize: 40, fontWeight: 800, color: '#C0392B', lineHeight: 1.25 }}>
+        <div style={{ fontSize: 34, fontWeight: 800, color: '#C0392B', lineHeight: 1.25 }}>
           {el.content}
         </div>
       );
@@ -264,7 +264,7 @@ function ElementView({
     case 'heading':
       return (
         <div>
-          <div style={{ fontSize: 31, fontWeight: 700, color: '#C0392B', lineHeight: 1.3 }}>
+          <div style={{ fontSize: 26, fontWeight: 700, color: '#C0392B', lineHeight: 1.3 }}>
             {el.content}
           </div>
           <div style={{ width: 150, height: 4, background: '#C0392B', marginTop: 8, borderRadius: 2 }} />
@@ -273,7 +273,7 @@ function ElementView({
 
     case 'chart': {
       const chart = resolveChart(el.dataKey, computeResult);
-      const h = chartHeight ?? 300;
+      const h = chartHeight ?? 240;
       if (!chart) {
         return (
           <div style={{
@@ -287,7 +287,7 @@ function ElementView({
       }
       return (
         <div style={{ background: 'rgba(255,255,255,0.86)', borderRadius: 10, padding: 14 }}>
-          <div style={{ fontSize: 19, fontWeight: 600, color: '#2C3E50', marginBottom: 6 }}>
+          <div style={{ fontSize: 16, fontWeight: 600, color: '#2C3E50', marginBottom: 6 }}>
             {chart.title}
           </div>
           <ChartRenderer
@@ -302,14 +302,14 @@ function ElementView({
 
     case 'text_block':
       return (
-        <div style={{ fontSize: 20, lineHeight: 1.75, color: '#2C3E50' }}>
+        <div style={{ fontSize: 17, lineHeight: 1.55, color: '#2C3E50' }}>
           {el.content}
         </div>
       );
 
     case 'bullet_list':
       return (
-        <ul style={{ paddingLeft: 34, margin: 0, fontSize: 20, lineHeight: 1.85, color: '#2C3E50' }}>
+        <ul style={{ paddingLeft: 34, margin: 0, fontSize: 16, lineHeight: 1.55, color: '#2C3E50' }}>
           {el.items?.map((item, i) => <li key={i}>{item}</li>)}
         </ul>
       );
@@ -327,12 +327,12 @@ function ElementView({
               background: '#FDEDEC',
               border: '2px solid #F5B7B1',
               borderRadius: 10,
-              padding: '12px 18px',
+              padding: '8px 14px',
               textAlign: 'center',
               flex: vertical ? '0 0 auto' : '1 1 0',
               minWidth: vertical ? 0 : 150,
             }}>
-              <div style={{ fontSize: 32, fontWeight: 800, color: '#C0392B', lineHeight: 1.15 }}>
+              <div style={{ fontSize: 26, fontWeight: 800, color: '#C0392B', lineHeight: 1.15 }}>
                 {m.value}
               </div>
               <div style={{ fontSize: 16, color: '#7F8C8D', marginTop: 2 }}>

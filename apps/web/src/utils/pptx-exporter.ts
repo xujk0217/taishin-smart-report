@@ -25,7 +25,7 @@ const BRAND = {
 // 16:9 wide layout is 13.333" × 7.5"
 const SLIDE_W = 13.333;
 const SLIDE_H = 7.5;
-const MARGIN = 0.85;
+const MARGIN = 0.6;
 const CONTENT_W = SLIDE_W - MARGIN * 2;
 
 const BG_FILES: Record<BackgroundTemplate, string> = {

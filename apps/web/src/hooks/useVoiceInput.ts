@@ -1,11 +1,14 @@
 /**
- * useVoiceInput — wrapper around the Web Speech API.
+ * useVoiceInput — singleton wrapper around the Web Speech API.
  *
- * Key fix: Chrome fires `onend` even with continuous=true when there's
- * a brief silence or a network hiccup. We auto-restart unless the user
- * explicitly stopped via toggle() or stop().
+ * The browser only allows ONE active SpeechRecognition session at a time.
+ * This module shares a single instance across all consumers. When one
+ * component calls toggle(), any other active consumer is implicitly stopped.
+ *
+ * Chrome fires `onend` even with continuous=true on brief silence — we
+ * auto-restart unless the user explicitly stopped.
  */
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 
 interface VoiceInput {
   supported: boolean;
@@ -16,25 +19,50 @@ interface VoiceInput {
   stop: () => void;
 }
 
+// ─── Singleton recognition instance ──────────────────────────
+
+let sharedRec: any = null;
+let sharedSupported = false;
+let sharedWantListening = false;
+let sharedListeners = new Set<() => void>();
+
+function getOrCreateRec(lang: string) {
+  if (sharedRec) return sharedRec;
+
+  const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
+  if (!SR) return null;
+
+  sharedSupported = true;
+  const rec = new SR();
+  rec.lang = lang;
+  rec.continuous = true;
+  rec.interimResults = true;
+  sharedRec = rec;
+  return rec;
+}
+
+function notifyAll() {
+  sharedListeners.forEach(fn => fn());
+}
+
+// ─── Hook ────────────────────────────────────────────────────
+
 export function useVoiceInput(lang = 'zh-TW'): VoiceInput {
-  const [supported, setSupported] = useState(false);
+  const [supported, setSupported] = useState(sharedSupported);
   const [listening, setListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [interim, setInterim] = useState('');
-  const recRef = useRef<any>(null);
-  // Track whether the user *wants* to be listening.
-  const wantListeningRef = useRef(false);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
-    const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
-    if (!SR) return;
+    mountedRef.current = true;
+    const rec = getOrCreateRec(lang);
+    if (!rec) return;
 
     setSupported(true);
-    const rec = new SR();
-    rec.lang = lang;
-    rec.continuous = true;
-    rec.interimResults = true;
 
+    // Wire event handlers (idempotent — last one wins, which is fine for a
+    // singleton since only one consumer should be "active" at a time).
     rec.onresult = (e: any) => {
       let finalText = '';
       let interimText = '';
@@ -51,68 +79,75 @@ export function useVoiceInput(lang = 'zh-TW'): VoiceInput {
     };
 
     rec.onend = () => {
-      // Chrome fires onend even with continuous=true.
-      // If user still wants to listen, restart immediately.
-      if (wantListeningRef.current) {
+      if (sharedWantListening) {
+        // Auto-restart on silence
         try {
           rec.start();
         } catch {
-          // If restart fails (e.g. permission revoked), give up.
-          wantListeningRef.current = false;
+          sharedWantListening = false;
           setListening(false);
+          notifyAll();
         }
       } else {
         setListening(false);
+        notifyAll();
       }
     };
 
     rec.onerror = (e: any) => {
-      // 'no-speech' and 'aborted' are non-fatal — Chrome fires these often.
-      if (e.error === 'no-speech' || e.error === 'aborted') {
-        // onend will handle restart
-        return;
-      }
+      if (e.error === 'no-speech' || e.error === 'aborted') return;
       console.warn('[Voice] Error:', e.error);
-      wantListeningRef.current = false;
+      sharedWantListening = false;
       setListening(false);
+      notifyAll();
     };
 
-    recRef.current = rec;
+    // Subscribe to state changes from other consumers
+    const syncState = () => {
+      if (mountedRef.current) {
+        setListening(sharedWantListening);
+      }
+    };
+    sharedListeners.add(syncState);
 
     return () => {
-      wantListeningRef.current = false;
-      rec.abort();
+      mountedRef.current = false;
+      sharedListeners.delete(syncState);
     };
   }, [lang]);
 
   const toggle = useCallback(() => {
-    const rec = recRef.current;
+    const rec = sharedRec;
     if (!rec) return;
 
-    if (wantListeningRef.current) {
-      // User wants to stop
-      wantListeningRef.current = false;
+    if (sharedWantListening) {
+      // Stop
+      sharedWantListening = false;
       rec.stop();
       setInterim('');
+      setListening(false);
     } else {
-      // User wants to start
-      wantListeningRef.current = true;
+      // Start
+      sharedWantListening = true;
       setTranscript('');
       setInterim('');
       try {
         rec.start();
         setListening(true);
       } catch {
-        // Already running (shouldn't happen but be safe)
+        // Already running — just claim it
         setListening(true);
       }
     }
+    notifyAll();
   }, []);
 
   const stop = useCallback(() => {
-    wantListeningRef.current = false;
-    recRef.current?.stop();
+    sharedWantListening = false;
+    sharedRec?.stop();
     setInterim('');
+    setListening(false);
+    notifyAll();
   }, []);
 
   return { supported, listening, transcript, interim, toggle, stop };

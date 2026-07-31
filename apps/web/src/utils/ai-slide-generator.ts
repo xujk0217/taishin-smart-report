@@ -87,7 +87,8 @@ const SYSTEM_PROMPT = `你是台新新光金控的專業簡報規劃 AI，為高
 
 ### 內容頁面
 - layout="content", background="002"
-- 每頁 3-5 個 elements，要有實質數據
+- 每頁 5-7 個 elements，頁面要填滿，不要留白
+- 每頁至少包含：heading + 2 個數據元素（chart/kpi/comparison/table）+ 1 個解讀元素（insight/text_block）+ source
 - 必須涵蓋使用者需求中的所有分析面向
 
 ### 頁數規則

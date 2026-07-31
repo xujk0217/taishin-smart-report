@@ -29,6 +29,7 @@ export function VoiceButton({ onResult, onInterim, lang = 'zh-TW' }: Props) {
       <button
         type="button"
         onClick={toggle}
+        onMouseDown={e => e.preventDefault()} // Don't steal focus from the input
         title={listening ? '停止語音輸入' : '語音輸入（中文）'}
         style={{
           width: 38,

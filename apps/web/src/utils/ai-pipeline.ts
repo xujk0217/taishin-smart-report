@@ -626,7 +626,7 @@ const SECTION_PAGES_SYSTEM = `你是簡報架構設計師。把一個段落展�
 3. 數據與洞察成對：同一頁要有數據元素（chart／kpi_block／comparison／table）
    也要有解讀元素（insight／text_block）
 4. 視覺節奏：同一段落內不要每頁都用一樣的元素組合
-5. content 頁的 elements 列 3 到 5 個
+5. content 頁的 elements 列 5 到 7 個，頁面要盡量填滿資訊
 6. 用到數據的頁面在 metricIds 標明，承接洞察的在 insightTopics 標明
 
 ## 可用元素
@@ -1035,6 +1035,107 @@ function buildFallbackArchitecture(
   };
 }
 
+// ─── Step 5: Compliance Verification ─────────────────────────
+
+const COMPLIANCE_SYSTEM = `你是品質審核員。比對使用者的原始需求和目前的分析結果，找出所有遺漏。
+
+你要檢查：
+1. 使用者提到的每一個分析指標是否都在 metrics 裡有對應？
+2. 使用者提到的每一個分析面向是否都有對應的 insight？
+3. 使用者要求的報告對象、語氣是否在架構中體現？
+4. 使用者提到的設計要求（頁數、圖表風格、文字風格等）是否被執行？
+5. 有沒有使用者明確要求但被遺漏的分析點？
+
+對於每個遺漏，提供：
+- 缺什麼（gap）
+- 如何補（建議新增的 metric 或 insight）
+
+輸出範例（格式示範）：
+{
+  "passed": false,
+  "checkedItems": 12,
+  "gaps": [
+    "使用者要求分析「停卡率」但 metrics 中沒有此指標",
+    "使用者要求「競爭者比較」但洞察中缺少跨銀行比較的主題"
+  ],
+  "corrections": {
+    "additionalMetrics": [
+      {"name":"停卡率","definition":"當月停卡數 ÷ 流通卡數 × 100%","category":"效率","relevanceToAudience":"反映客戶流失情況"}
+    ],
+    "additionalInsights": [
+      {"topic":"競爭者比較","keyFinding":"中信與國泰合計市占36.55%，遠超台新10.67%","dataPoints":["中信18.50%","國泰18.05%","台新10.67%"],"implication":"雙強格局穩固，台新需差異化突圍","recommendation":"避免正面價格戰，聚焦特定消費場景","chartSuggestion":"comparison"}
+    ]
+  }
+}
+
+如果全部吻合沒有遺漏，回傳：
+{"passed":true,"checkedItems":12,"gaps":[],"corrections":null}`;
+
+interface ComplianceResult {
+  passed: boolean;
+  checkedItems: number;
+  gaps: string[];
+  corrections?: {
+    additionalMetrics?: MetricSpec[];
+    additionalInsights?: TopicInsight[];
+  } | null;
+}
+
+async function verifyCompliance(
+  prompt: string,
+  audience: AudienceContext,
+  metrics: MetricSpec[],
+  insights: TopicInsight[],
+  architecture: SlideArchitecture,
+): Promise<ComplianceResult> {
+  const result = await aiJSON<ComplianceResult>(
+    COMPLIANCE_SYSTEM,
+    `## 使用者原始需求
+${prompt}
+
+## 目前的分析結果
+
+### 報告對象
+受眾：${audience.audience}
+目的：${audience.purpose}
+重點面向：${audience.focusAreas.join('、')}
+頁數：${audience.requestedPageCount ?? '系統規劃'}
+設計要求：${audience.designDirectives.join('、') || '無'}
+文字風格：${audience.narrativeStyle.join('、') || '無'}
+圖表偏好：${audience.chartPreferences.join('、') || '無'}
+限制：${audience.constraints.join('、') || '無'}
+
+### 已產出的指標（${metrics.length} 個）
+${metrics.map(m => `• ${m.name}（${m.category}）`).join('\n')}
+
+### 已產出的洞察（${insights.length} 個）
+${insights.map(i => `• 【${i.topic}】${i.keyFinding}`).join('\n')}
+
+### 簡報架構（${architecture.totalPages} 頁）
+${architecture.sections.map(s => `段落「${s.title}」: ${s.pages.length} 頁`).join('\n')}
+
+請逐項比對使用者需求，找出所有遺漏或不符之處。`,
+    10000,
+    'compliance',
+  );
+
+  if (!result) {
+    return { passed: true, checkedItems: 0, gaps: [] };
+  }
+
+  console.log(`[Compliance] passed=${result.passed}, gaps=${result.gaps?.length ?? 0}`);
+  if (result.gaps?.length) {
+    result.gaps.forEach(g => console.log(`  ⚠ ${g}`));
+  }
+
+  return {
+    passed: result.passed ?? true,
+    checkedItems: result.checkedItems ?? 0,
+    gaps: (result.gaps ?? []).filter(g => typeof g === 'string' && !isPlaceholder(g)),
+    corrections: result.corrections,
+  };
+}
+
 // ─── Full Pipeline ───────────────────────────────────────────
 
 export interface PipelineProgress {
@@ -1050,7 +1151,7 @@ export async function runAIPipeline(
   dataSummary: string,
   onProgress?: (p: PipelineProgress) => void,
 ): Promise<PipelineResult> {
-  const TOTAL = 4;
+  const TOTAL = 5;
 
   onProgress?.({ step: 1, total: TOTAL, label: '解讀需求與報告對象' });
   const audience = await analyzeAudience(prompt, excelSummary);
@@ -1089,5 +1190,37 @@ export async function runAIPipeline(
 
   const suggestedSlides = architecture.sections.flatMap(s => s.pages.map(p => p.pageTitle));
 
-  return { audience, metrics, insights, architecture, unsupported, suggestedSlides };
+  // ── Step 5: Compliance verification ──
+  onProgress?.({ step: 5, total: TOTAL, label: '驗證與 prompt 的一致性' });
+  const complianceResult = await verifyCompliance(prompt, audience, metrics, insights, architecture);
+  onProgress?.({
+    step: 5, total: TOTAL, label: '驗證與 prompt 的一致性',
+    detail: complianceResult.passed
+      ? `✓ 全部吻合（${complianceResult.checkedItems} 項）`
+      : `修正 ${complianceResult.gaps.length} 項缺漏`,
+  });
+
+  // Apply any corrections the compliance check found
+  let finalMetrics = metrics;
+  let finalInsights = insights;
+  if (!complianceResult.passed && complianceResult.corrections) {
+    if (complianceResult.corrections.additionalMetrics?.length) {
+      const existing = new Set(metrics.map(m => m.name));
+      for (const m of complianceResult.corrections.additionalMetrics) {
+        if (!existing.has(m.name)) {
+          finalMetrics = [...finalMetrics, { ...m, id: `m${finalMetrics.length + 1}`, supported: true }];
+        }
+      }
+    }
+    if (complianceResult.corrections.additionalInsights?.length) {
+      const existing = new Set(insights.map(i => i.topic));
+      for (const i of complianceResult.corrections.additionalInsights) {
+        if (!existing.has(i.topic)) {
+          finalInsights = [...finalInsights, i];
+        }
+      }
+    }
+  }
+
+  return { audience, metrics: finalMetrics, insights: finalInsights, architecture, unsupported, suggestedSlides };
 }
