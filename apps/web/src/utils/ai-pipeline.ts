@@ -626,17 +626,19 @@ const SECTION_PAGES_SYSTEM = `你是簡報架構設計師。把一個段落展�
 3. 數據與洞察成對：同一頁要有數據元素（chart／kpi_block／comparison／table）
    也要有解讀元素（insight／text_block）
 4. 視覺節奏：同一段落內不要每頁都用一樣的元素組合
-5. content 頁的 elements 列 5 到 7 個，頁面要充實不留白
+5. content 頁的版面覆蓋率目標 75-85%，每個元素帶 size 欄位（small/medium/large/full）
 6. 用到數據的頁面在 metricIds 標明，承接洞察的在 insightTopics 標明
-7. 每頁必須含 heading + 至少 2 個數據元素 + 至少 1 個解讀元素 + source
+7. 如果一個元素的資料量很大（10家以上比較、多行表格），給 size="full" 獨佔一頁
+8. 寧可拆成兩頁讓每頁充實清晰，也不要擠在一頁
 
 ## 元素填入指南
-- chart: 搭配 kpi_block 在旁邊標註關鍵數字
-- kpi_block: 至少 3 個指標（label + value + rank/trend）
-- comparison: 列出 5 家銀行的比較
-- text_block: 3-4 句完整分析（趨勢描述+原因推斷+意涵）
-- bullet_list: 每條含數字和觀點
-- insight: 策略性結論（含行動方向）
+- chart: size="large"，搭配 kpi_block(size="medium") 標註關鍵數字
+- kpi_block: 數量依 prompt 決定，不要自行限制
+- comparison: 銀行數量依 prompt 決定（使用者說幾家就幾家）
+- text_block: 3-4 句完整分析（趨勢描述+原因推斷+策略意涵）, size="medium"
+- bullet_list: 每條都要有數字和觀點, size 依條目數決定
+- insight: 策略性結論（含行動方向）, size="small"
+- source: size="small"，每頁都要有
 
 ## 可用元素
 heading、chart、kpi_block、comparison、table、insight、text_block、bullet_list、source

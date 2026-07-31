@@ -273,7 +273,7 @@ function ElementView({
 
     case 'chart': {
       const chart = resolveChart(el.dataKey, computeResult);
-      const h = chartHeight ?? 240;
+      const h = chartHeight ?? (el.size === 'full' ? 420 : el.size === 'large' ? 320 : 240);
       if (!chart) {
         return (
           <div style={{

@@ -298,7 +298,8 @@ function renderElement(
 
     case 'chart': {
       const chart = resolveChart(el.dataKey, result);
-      const h = Math.min(3.6, SLIDE_H - cursor.y - 0.9);
+      const maxH = el.size === 'full' ? 5.5 : el.size === 'large' ? 4.2 : 3.2;
+      const h = Math.min(maxH, SLIDE_H - cursor.y - 0.9);
       if (chart && h > 1.2) {
         addNativeChart(slide, chart, x, cursor.y, w, h);
         cursor.y += h + 0.2;

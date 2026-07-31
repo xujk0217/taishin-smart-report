@@ -1,6 +1,12 @@
 /**
  * Detailed Slide Spec - AI outputs this JSON structure.
  * Each slide has a background template, layout type, and multiple elements.
+ *
+ * Layout philosophy: pages target ~80% area coverage. Elements carry a `size`
+ * hint so the renderer and the AI can reason about how much space each one
+ * consumes. When total area would exceed ~85%, the content should be split
+ * across pages. When below ~60%, elements should be enlarged or more analysis
+ * added.
  */
 
 export type BackgroundTemplate = '001' | '002' | '003';
@@ -23,9 +29,20 @@ export type ElementType =
   | 'comparison'
   | 'table';
 
+/**
+ * How much of the page this element should occupy (approximate area fraction).
+ *   small  ≈ 10-15% (a one-line insight, a source footnote)
+ *   medium ≈ 20-35% (a KPI row, a 3-bullet list, a text paragraph)
+ *   large  ≈ 40-60% (a chart, a 6-row table, a multi-bank comparison)
+ *   full   ≈ 70-90% (a chart that IS the page, a large data table)
+ */
+export type ElementSize = 'small' | 'medium' | 'large' | 'full';
+
 export interface SlideElement {
   type: ElementType;
   content?: string;
+  /** Layout hint: how much of the page this element should fill. */
+  size?: ElementSize;
   position?: 'center' | 'left' | 'right' | 'top' | 'bottom' | 'main' | 'full';
   // Chart specific
   chartType?: 'line' | 'bar' | 'pie';
