@@ -9,6 +9,7 @@ import { PreviewStage } from './components/PreviewStage';
 import { SendStage } from './components/SendStage';
 import { generatePlanWithAI } from './utils/groq';
 import { runAIPipeline, type PipelineResult } from './utils/ai-pipeline';
+import { checkAIEndpoint } from './utils/groq-retry';
 import { readAllExcelFiles, summariesToText, type FileSummary } from './utils/excel-reader';
 import { computeMetrics, type ComputeResult } from './utils/metric-engine';
 import { generateSlideSpec } from './utils/ai-slide-generator';
@@ -67,7 +68,13 @@ function App() {
     // 2. Send structure + prompt to AI for plan generation
     const fileNames = uploadedFiles.map(f => f.name);
     
-    readAllExcelFiles(uploadedFiles)
+    setAiStatus('檢查 AI 連線...');
+
+    checkAIEndpoint()
+      .then(problem => {
+        if (problem) throw new Error(problem);
+        return readAllExcelFiles(uploadedFiles);
+      })
       .then(summaries => {
         let processedSummaries = summaries;
         if (isMonthlyFileSet(summaries)) {
@@ -133,7 +140,7 @@ function App() {
         console.error('AI pipeline failed:', err);
         setAiStatus('');
         const useMock = confirm(
-          `AI 分析失敗（${err?.message?.slice(0, 60) ?? '連線逾時'}）。\n\n按「確定」使用範例計劃繼續，按「取消」返回重試。`
+          `AI 分析失敗\n\n${err?.message ?? '未知錯誤'}\n\n按「確定」使用範例計劃繼續，按「取消」返回重試。`
         );
         if (useMock) {
           setPlan(generateMockPlan(userPrompt));
