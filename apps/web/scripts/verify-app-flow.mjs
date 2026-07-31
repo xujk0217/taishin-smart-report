@@ -360,6 +360,57 @@ check('pipeline', 'outline produced sections', outlineSections.length >= 3, `${o
 check('pipeline', 'outline has a narrative',
   !!outline?.narrative && !isPlaceholder(outline.narrative));
 
+// Mirrors normaliseOutlineToBudget from src/utils/ai-pipeline.ts, so the deck
+// lands on the page count the prompt asked for.
+function normaliseOutlineToBudget(sections, target) {
+  if (sections.length < 2) return;
+  const clampContent = (s, min, max) => {
+    const n = Number.isFinite(s.contentPages) ? Math.round(s.contentPages) : min;
+    s.contentPages = Math.max(min, Math.min(n, max));
+  };
+  const opening = sections[0];
+  const closing = sections[sections.length - 1];
+  const middle = sections.slice(1, -1);
+  if (middle.length === 0) return;
+
+  const spare = target - (2 + 1 + middle.length + 1);
+  const maxPerSection = Math.max(4, Math.ceil(spare / middle.length) + 1);
+
+  clampContent(opening, 0, 1);
+  closing.contentPages = 0;
+  middle.forEach(s => clampContent(s, 1, maxPerSection));
+
+  const fixed = () => 2 + opening.contentPages + middle.length + 1;
+  const totalOf = () => fixed() + middle.reduce((n, s) => n + s.contentPages, 0);
+
+  let guard = 0;
+  while (totalOf() > target && guard++ < 200) {
+    const widest = middle.reduce((a, b) => (b.contentPages > a.contentPages ? b : a));
+    if (widest.contentPages > 1) widest.contentPages--;
+    else if (opening.contentPages > 0) opening.contentPages = 0;
+    else if (middle.length > 1) {
+      const removed = middle.pop();
+      const at = sections.indexOf(removed);
+      if (at > 0) sections.splice(at, 1);
+    } else break;
+  }
+  guard = 0;
+  while (totalOf() < target && guard++ < 200) {
+    const thinnest = middle.reduce((a, b) => (b.contentPages < a.contentPages ? b : a));
+    if (thinnest.contentPages < maxPerSection) thinnest.contentPages++;
+    else if (opening.contentPages < 1) opening.contentPages = 1;
+    else break;
+  }
+}
+
+const beforeNorm = outlineSections.reduce((n, s, i) =>
+  n + (i === 0 ? 2 : i === outlineSections.length - 1 ? 1 : 1) + (s.contentPages ?? 0), 0);
+normaliseOutlineToBudget(outlineSections, targetPages);
+const plannedPages = outlineSections.reduce((n, s, i) =>
+  n + (i === 0 ? 2 : i === outlineSections.length - 1 ? 1 : 1) + (s.contentPages ?? 0), 0);
+check('pipeline', 'outline normalised to the requested page count',
+  plannedPages === targetPages, `${beforeNorm} → ${plannedPages} (target ${targetPages})`);
+
 const sections = [];
 for (let idx = 0; idx < outlineSections.length; idx++) {
   const s = outlineSections[idx];
