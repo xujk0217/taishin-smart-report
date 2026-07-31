@@ -9,11 +9,17 @@ const KEY = import.meta.env.VITE_OPENCODE_KEY || import.meta.env.VITE_GROQ_KEY |
 
 const SYSTEM = `你是台新金控的分析計劃調整助理。使用者會告訴你想怎麼修改目前的分析計劃。
 
-你必須回傳修改後的完整 JSON（跟輸入格式一樣）：
+你必須回傳修改後的完整 JSON。formulas 與 suggestedSlides 要包含所有項目（含沒被修改的），
+不可用省略號代替。
+
+輸出範例（格式示範）：
 {
-  "formulas": [...],
-  "suggestedSlides": [...],
-  "explanation": "說明你做了什麼修改（1-2句話）"
+  "formulas": [
+    { "id": "f1", "name": "簽帳金額市占率", "definition": "個別銀行簽帳金額 ÷ 總計 × 100%", "supported": true },
+    { "id": "f2", "name": "流通卡數市占率", "definition": "個別銀行流通卡數 ÷ 總計 × 100%", "supported": true }
+  ],
+  "suggestedSlides": ["封面", "目錄", "市占率趨勢", "排名比較", "結論與建議", "封底"],
+  "explanation": "已新增流通卡數比較頁，並將月增率分析移到結論之前"
 }
 
 規則：

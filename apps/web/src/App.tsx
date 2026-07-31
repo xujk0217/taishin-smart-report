@@ -122,6 +122,13 @@ function App() {
             `報告目的：${pipelineResult.audience.purpose}`,
             `語氣：${pipelineResult.audience.tone}`,
             `深度：${pipelineResult.audience.depth === 'executive' ? '高階摘要' : pipelineResult.audience.depth === 'detailed' ? '詳細分析' : '技術細節'}`,
+            pipelineResult.audience.requestedPageCount
+              ? `頁數：依需求指定 ${pipelineResult.audience.requestedPageCount} 頁`
+              : `頁數：由系統依內容規劃 ${pipelineResult.architecture.totalPages} 頁`,
+            ...pipelineResult.audience.designDirectives.map(d => `版面要求：${d}`),
+            ...pipelineResult.audience.narrativeStyle.map(d => `文字風格：${d}`),
+            ...pipelineResult.audience.chartPreferences.map(d => `圖表偏好：${d}`),
+            ...pipelineResult.audience.constraints.map(d => `限制：${d}`),
             '期間格式為民國年月（11401 = 114年1月）',
             '金額單位為新臺幣千元',
           ],
@@ -169,7 +176,12 @@ function App() {
 
         // Step 2: Generate detailed slide spec via AI
         setProgress(60);
-        const spec = await generateSlideSpec(prompt, result, excelSummaryRef.current);
+        const spec = await generateSlideSpec(
+          prompt,
+          result,
+          excelSummaryRef.current,
+          pipelineResultRef.current ?? undefined,
+        );
         console.log('[App] Slide spec generated:', spec.metadata);
 
         setProgress(90);
@@ -225,7 +237,7 @@ function App() {
           <div className="subtitle">台新新光金控 AI 報表轉簡報系統</div>
         </div>
         <div style={{ fontSize: '0.8rem', opacity: 0.8 }}>
-          Powered by Groq + LLama 3.1
+          Powered by OpenCode · DeepSeek V4 Flash
         </div>
       </header>
 

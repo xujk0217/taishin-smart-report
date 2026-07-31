@@ -8,6 +8,62 @@
 import { callGroqWithRetry, extractContent } from './groq-retry';
 import type { PresentationSpec, SlideSpec } from '../types/slide-spec';
 import type { ComputeResult } from './metric-engine';
+import type { PipelineResult } from './ai-pipeline';
+
+/**
+ * Renders the pipeline's blueprint, insights, and design directives into a
+ * brief the slide generator must follow.
+ */
+function buildBlueprintBrief(pipeline: PipelineResult): string {
+  const { audience, architecture, insights, metrics } = pipeline;
+
+  const directives = [
+    audience.designDirectives.length ? `版面與視覺：${audience.designDirectives.join('；')}` : '',
+    audience.narrativeStyle.length ? `文字敘述：${audience.narrativeStyle.join('；')}` : '',
+    audience.chartPreferences.length ? `圖表偏好：${audience.chartPreferences.join('；')}` : '',
+    audience.constraints.length ? `必須遵守：${audience.constraints.join('；')}` : '',
+  ].filter(Boolean);
+
+  const pageLines: string[] = [];
+  let page = 1;
+  for (const section of architecture.sections) {
+    pageLines.push(`  段落「${section.title}」— ${section.purpose}`);
+    for (const p of section.pages) {
+      const refs = [
+        p.metricIds?.length ? `指標 ${p.metricIds.join(',')}` : '',
+        p.insightTopics?.length ? `洞察 ${p.insightTopics.join('／')}` : '',
+      ].filter(Boolean).join('｜');
+      pageLines.push(
+        `    第 ${page} 頁 [${p.layout}] ${p.pageTitle}`,
+        `      這頁的訊息：${p.message}`,
+        `      要放的元素：${p.elements.join('、')}${refs ? `　（${refs}）` : ''}`,
+      );
+      page++;
+    }
+  }
+
+  return [
+    '## 報告設定',
+    `對象：${audience.audience}`,
+    `目的：${audience.purpose}`,
+    `語氣：${audience.tone}`,
+    `深度：${audience.depth}`,
+    directives.length ? `\n## 使用者的設計要求\n${directives.join('\n')}` : '',
+    '',
+    '## 簡報主軸',
+    architecture.narrative,
+    '',
+    `## 簡報藍圖（共 ${architecture.totalPages} 頁，必須完全照做）`,
+    pageLines.join('\n'),
+    '',
+    '## 可引用的指標',
+    metrics.filter(m => m.supported).map(m => `[${m.id}] ${m.name} = ${m.definition}`).join('\n'),
+    '',
+    '## 可引用的洞察',
+    insights.map(i => `【${i.topic}】${i.keyFinding}\n  意涵：${i.implication}\n  建議：${i.recommendation}`).join('\n'),
+    '',
+  ].filter(Boolean).join('\n');
+}
 
 const API_KEY = import.meta.env.VITE_OPENCODE_KEY || import.meta.env.VITE_GROQ_KEY || '';
 
@@ -34,15 +90,16 @@ const SYSTEM_PROMPT = `你是台新新光金控的專業簡報規劃 AI，為高
 - 每頁 3-5 個 elements，要有實質數據
 - 必須涵蓋使用者需求中的所有分析面向
 
-### 頁面計算範例（15 頁的報告）
-- 封面: 1 頁
-- 目錄: 1 頁  
-- 段落A標題: 1 頁 → 段落A內容: 2-3 頁
-- 段落B標題: 1 頁 → 段落B內容: 2-3 頁
-- 段落C標題: 1 頁 → 段落C內容: 1-2 頁
-- 結論: 1 頁
-- 封底: 1 頁
-= 共 12-16 頁
+### 頁數規則
+- 若使用者訊息中提供了「簡報藍圖」，總頁數必須與藍圖完全一致，逐頁照做
+- 若沒有藍圖，依使用者要求的頁數；使用者沒指定才自行規劃
+
+### 頁面配置範例（15 頁）
+- 封面 1 頁、目錄 1 頁
+- 段落A標題 1 頁 → 段落A內容 2-3 頁
+- 段落B標題 1 頁 → 段落B內容 2-3 頁
+- 段落C標題 1 頁 → 段落C內容 1-2 頁
+- 結論 1 頁、封底 1 頁
 
 ## 背景圖
 - "001" = 品牌裝飾背景（用於封面、段落標題、封底）
@@ -78,7 +135,52 @@ const SYSTEM_PROMPT = `你是台新新光金控的專業簡報規劃 AI，為高
 
 ## 輸出格式
 回傳純 JSON（不要 markdown 標記）：
-{"slides":[{"page":1,"background":"001","layout":"cover","section":"封面","elements":[{"type":"title","content":"..."},{"type":"subtitle","content":"..."}]},{"page":2,"background":"002","layout":"toc","elements":[{"type":"title","content":"目錄"},{"type":"bullet_list","items":["..."]}]},...]}`;
+【絕對規則】
+- 每個欄位都要填真實內容，嚴禁輸出「...」、空字串或把欄位名稱當值
+- 標題必須帶訊息，不可只寫「數據分析」、「市占率」這種標籤
+- 所有數字必須來自提供的數據
+- 只輸出 JSON，不要有 markdown 標記
+
+輸出範例（格式示範，內容需依實際數據重寫）：
+{
+  "slides": [
+    {
+      "page": 1,
+      "background": "001",
+      "layout": "cover",
+      "section": "開場",
+      "elements": [
+        { "type": "title", "content": "114 年度信用卡市場競爭分析" },
+        { "type": "subtitle", "content": "34 家銀行 × 12 個月份｜台新新光金控" }
+      ]
+    },
+    {
+      "page": 2,
+      "background": "002",
+      "layout": "toc",
+      "elements": [
+        { "type": "title", "content": "目錄" },
+        { "type": "bullet_list", "items": ["一、市場定位", "二、成長動能", "三、策略建議"] }
+      ]
+    },
+    {
+      "page": 3,
+      "background": "002",
+      "layout": "content",
+      "section": "市場定位",
+      "elements": [
+        { "type": "heading", "content": "與第四名差距縮小至 1.30 個百分點" },
+        { "type": "chart", "chartType": "line", "dataKey": "market_share_trend" },
+        { "type": "kpi_block", "metrics": [
+          { "label": "台新市占率", "value": "10.67%", "rank": 5 },
+          { "label": "月增率", "value": "+11.62%", "trend": "↑" }
+        ]},
+        { "type": "insight", "content": "台新 10.67% 對玉山 11.97%，差距為三年最小，具備進入前四的條件" },
+        { "type": "source", "content": "金管會信用卡重要資訊揭露 114年1-12月" }
+      ]
+    }
+  ]
+}`;
 
 // ─── Validation Prompt ───────────────────────────────────────
 
@@ -103,6 +205,7 @@ export async function generateSlideSpec(
   prompt: string,
   computeResult: ComputeResult,
   excelSummary: string,
+  pipeline?: PipelineResult,
 ): Promise<PresentationSpec> {
   const topMetrics = computeResult.metrics
     .filter(m => m.rank && m.rank <= 5)
@@ -121,7 +224,24 @@ export async function generateSlideSpec(
     ),
   ].join('\n');
 
-  const userMsg = `${excelSummary}\n\n數據摘要:\n${dataSummary}\n\n使用者需求: ${prompt}\n\n請生成 12-16 頁的完整簡報 JSON。記得包含封面、目錄、段落標題頁、內容頁、封底。`;
+  // When the pipeline ran, follow its blueprint page by page instead of
+  // letting the model invent a fresh structure.
+  const blueprintBlock = pipeline ? buildBlueprintBrief(pipeline) : '';
+  const targetPages = pipeline?.architecture.totalPages ?? 14;
+
+  const userMsg = [
+    excelSummary,
+    '',
+    '數據摘要:',
+    dataSummary,
+    '',
+    blueprintBlock,
+    `使用者需求原文: ${prompt}`,
+    '',
+    pipeline
+      ? `請完全依照上面的簡報藍圖產生 ${targetPages} 頁的 JSON。每一頁的 pageTitle、layout、message、elements 都要落實，不可增減頁數。`
+      : `請生成 ${targetPages} 頁的完整簡報 JSON，包含封面、目錄、段落標題頁、內容頁、封底。`,
+  ].filter(Boolean).join('\n');
 
   try {
     const timeout = new Promise<never>((_, reject) =>

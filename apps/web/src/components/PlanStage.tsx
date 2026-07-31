@@ -5,6 +5,7 @@ import { CSS } from '@dnd-kit/utilities';
 import type { AnalysisPlan } from '../types';
 import { adjustPlanWithAI } from '../utils/plan-adjuster';
 import { VoiceButton } from './VoiceButton';
+import { useEnterSubmit } from '../utils/ime';
 
 interface Props {
   plan: AnalysisPlan;
@@ -84,6 +85,8 @@ export function PlanStage({ plan: initialPlan, onApprove, onBack }: Props) {
     }
     setIsAdjusting(false);
   };
+
+  const chatEnter = useEnterSubmit(handleChat);
 
   const handleApprove = () => {
     onApprove({
@@ -189,7 +192,7 @@ export function PlanStage({ plan: initialPlan, onApprove, onBack }: Props) {
             value={chatInput}
             onChange={e => setChatInput(e.target.value)}
             placeholder="告訴 AI 你想怎麼調整，例如「加一頁競爭者比較」「移除月增率」..."
-            onKeyDown={e => e.key === 'Enter' && handleChat()}
+            {...chatEnter}
             disabled={isAdjusting}
           />
           <VoiceButton onResult={text => setChatInput(prev => prev + text)} />

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import type { SlideSpec } from '../types/slide-spec';
 import type { ComputeResult } from '../utils/metric-engine';
 import { traceElement, type ElementProvenance } from '../utils/provenance';
@@ -6,6 +6,7 @@ import { editSlide, type EditResult } from '../utils/slide-editor';
 import { SlideCanvas } from './SlideCanvas';
 import { DataInspector } from './DataInspector';
 import { VoiceButton } from './VoiceButton';
+import { useEnterSubmit } from '../utils/ime';
 
 interface Props {
   slides: SlideSpec[];
@@ -108,7 +109,7 @@ export function PreviewStage({ slides, computeResult, onExport, exporting, onSli
   // Clear stale edit feedback when moving to a different slide.
   useEffect(() => { setEditFeedback(null); }, [safeIdx]);
 
-  const runEdit = async () => {
+  const runEdit = useCallback(async () => {
     const text = instruction.trim();
     if (!text || !current || editing) return;
     setEditing(true);
@@ -123,7 +124,9 @@ export function PreviewStage({ slides, computeResult, onExport, exporting, onSli
     } finally {
       setEditing(false);
     }
-  };
+  }, [instruction, current, editing, onSlideChange, safeIdx]);
+
+  const editEnter = useEnterSubmit(runEdit);
 
   const downloadEvidence = async () => {
     setExportingXlsx(true);
@@ -260,7 +263,7 @@ export function PreviewStage({ slides, computeResult, onExport, exporting, onSli
                   placeholder="用一句話修改這一頁，例如：標題改得更精簡、要點改成三條"
                   value={instruction}
                   onChange={e => setInstruction(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') runEdit(); }}
+                  {...editEnter}
                   disabled={editing}
                 />
                 <VoiceButton onResult={text => setInstruction(prev => prev + text)} />
