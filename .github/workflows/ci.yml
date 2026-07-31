@@ -83,6 +83,10 @@ jobs:
         working-directory: apps/web
         run: node scripts/verify-json-repair.mjs
 
+      - name: Page budget normalisation
+        working-directory: apps/web
+        run: node scripts/verify-page-budget.mjs
+
       - name: IME Enter handling
         working-directory: apps/web
         run: node scripts/verify-ime.mjs

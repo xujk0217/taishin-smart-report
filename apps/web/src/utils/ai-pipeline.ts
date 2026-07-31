@@ -662,6 +662,76 @@ interface OutlineSection {
 }
 
 /**
+ * Adjusts the outline's content-page counts in place so the finished deck lands
+ * on the target page count.
+ *
+ * Page accounting:
+ *   opening section  → cover + toc + its contentPages
+ *   middle sections  → 1 section_title + its contentPages
+ *   closing section  → 1 backcover
+ */
+function normaliseOutlineToBudget(sections: OutlineSection[], target: number): void {
+  if (sections.length < 2) return;
+
+  const clampContent = (s: OutlineSection, min: number, max: number) => {
+    const n = Number.isFinite(s.contentPages) ? Math.round(s.contentPages) : min;
+    s.contentPages = Math.max(min, Math.min(n, max));
+  };
+
+  const opening = sections[0];
+  const closing = sections[sections.length - 1];
+  const middle = sections.slice(1, -1);
+
+  // Nothing to distribute across; leave as-is.
+  if (middle.length === 0) return;
+
+  // With few sections each one has to carry more pages to reach the target,
+  // so the ceiling scales with how much there is to distribute.
+  const spare = target - (2 + 1 + middle.length + 1);
+  const maxPerSection = Math.max(4, Math.ceil(spare / middle.length) + 1);
+
+  clampContent(opening, 0, 1);
+  closing.contentPages = 0;
+  middle.forEach(s => clampContent(s, 1, maxPerSection));
+
+  const fixed = () => 2 + opening.contentPages + middle.length + 1;
+  const totalOf = () => fixed() + middle.reduce((n, s) => n + s.contentPages, 0);
+
+  let guard = 0;
+  while (totalOf() > target && guard++ < 200) {
+    // Trim the section with the most content pages first.
+    const widest = middle.reduce((a, b) => (b.contentPages > a.contentPages ? b : a));
+    if (widest.contentPages > 1) {
+      widest.contentPages--;
+    } else if (opening.contentPages > 0) {
+      opening.contentPages = 0;
+    } else if (middle.length > 1) {
+      // Every section is already minimal: drop the last analysis section.
+      const removed = middle.pop()!;
+      const at = sections.indexOf(removed);
+      if (at > 0) sections.splice(at, 1);
+    } else {
+      break;
+    }
+  }
+
+  guard = 0;
+  while (totalOf() < target && guard++ < 200) {
+    // Grow the thinnest section first so coverage stays even.
+    const thinnest = middle.reduce((a, b) => (b.contentPages < a.contentPages ? b : a));
+    if (thinnest.contentPages < maxPerSection) {
+      thinnest.contentPages++;
+    } else if (opening.contentPages < 1) {
+      opening.contentPages = 1;
+    } else {
+      break;
+    }
+  }
+
+  console.log(`[Blueprint] outline normalised to ${totalOf()} pages (target ${target})`);
+}
+
+/**
  * Designs the deck in two phases so no single request approaches the gateway
  * timeout: a cheap section outline, then one small expansion per section.
  */
@@ -726,6 +796,8 @@ ${prompt}
   const narrative = outline?.narrative && !isPlaceholder(outline.narrative)
     ? outline.narrative
     : `${audience.audience}：${audience.purpose}`;
+
+  normaliseOutlineToBudget(outlineSections, budget.total);
 
   // ── Phase B: expand each section ──
   const sections: SlideArchitecture['sections'] = [];

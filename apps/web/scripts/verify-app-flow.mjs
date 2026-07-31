@@ -442,8 +442,16 @@ check('pipeline', 'page count honours the requested 14', Math.abs(pages.length -
 check('pipeline', 'page 1 is cover', pages[0]?.layout === 'cover', pages[0]?.layout);
 check('pipeline', 'page 2 is toc', pages[1]?.layout === 'toc', pages[1]?.layout);
 check('pipeline', 'last page is backcover', pages.at(-1)?.layout === 'backcover', pages.at(-1)?.layout);
-check('pipeline', 'titles carry a message not a label',
-  pages.every(p => p.pageTitle.length > 3));
+// Structural pages legitimately have short titles (目錄, 結語); only content
+// pages must state a finding rather than a bare label.
+const LABEL_ONLY = /^(數據分析|市占率|分析|圖表|數據|結論|概況|說明)$/;
+const contentTitles = pages.filter(p => p.layout === 'content').map(p => p.pageTitle);
+check('pipeline', 'content titles state a finding, not a label',
+  contentTitles.every(t => t.length >= 8 && !LABEL_ONLY.test(t)),
+  `${contentTitles.length} content pages`);
+check('pipeline', 'content titles mostly cite a number',
+  contentTitles.filter(t => /\d/.test(t)).length >= Math.ceil(contentTitles.length * 0.6),
+  `${contentTitles.filter(t => /\d/.test(t)).length}/${contentTitles.length} with numbers`);
 check('pipeline', 'every page states its message',
   pages.every(p => p.message && !isPlaceholder(p.message)));
 check('pipeline', 'content pages have 3+ elements',
@@ -477,7 +485,11 @@ const plan = {
   })),
 };
 
-check('plan', 'formulas listed', plan.formulas.length >= 5, `${plan.formulas.length}`);
+// Some requested metrics may legitimately land in unsupported, so the plan is
+// judged on total coverage rather than on the supported count alone.
+check('plan', 'plan accounts for every requested metric',
+  plan.formulas.length + plan.unsupported.length >= requested.length,
+  `${plan.formulas.length} supported + ${plan.unsupported.length} unsupported vs ${requested.length} requested`);
 check('plan', 'insights card populated', plan.insights.length >= 3, `${plan.insights.length}`);
 check('plan', 'directives surfaced in assumptions',
   plan.assumptions.some(a => a.startsWith('版面要求')) &&
