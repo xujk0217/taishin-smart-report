@@ -140,7 +140,7 @@ export function extractContent(response: any): string {
 const MAX_RETRIES = 2;
 const RETRY_DELAY_MS = 3000;
 /** Give up before the serverless gateway's own limit so retries stay useful. */
-const REQUEST_TIMEOUT_MS = 100_000;
+const REQUEST_TIMEOUT_MS = 300_000;
 
 async function callProvider(
   provider: Provider & { resolvedKey: string },
