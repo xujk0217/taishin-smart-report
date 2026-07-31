@@ -121,12 +121,16 @@ const SYSTEM_PROMPT = `你是台新新光金控的專業簡報規劃 AI，為高
 - "table": 資料表，headers + rows
 - "source": 來源標註（底部小字）
 
-## 內容頁規則
-1. 每頁至少含 heading + 2 個以上數據元素
-2. 圖表頁搭配 insight + source
-3. 至少一頁有 kpi_block
-4. 至少一頁有 comparison
-5. 結論頁用 bullet_list + kpi_block 總結
+## 內容頁規則（每頁要盡量充實，不要留白）
+1. 每頁至少含 heading + 3 個以上數據/分析元素 + source
+2. 圖表頁搭配 kpi_block + insight + source
+3. 比較頁搭配 text_block（解讀差異原因）+ source
+4. text_block 要寫 3-4 句完整的分析段落，不要只有一句
+5. bullet_list 每條要有具體數字和觀點，不要只寫標籤
+6. insight 要有策略建議，不只描述現象
+7. kpi_block 至少放 3 個指標，每個都要有 label + value + rank 或 trend
+8. comparison 至少比較 5 家銀行
+9. 結論頁用 bullet_list（5-6 條策略建議）+ kpi_block（3-4 個目標數字）
 
 ## 品質要求
 - 每個段落標題頁對應至少 1-3 頁內容頁

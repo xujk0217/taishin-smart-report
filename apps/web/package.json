@@ -18,6 +18,7 @@
     "@smart-report/contracts": "file:../../packages/contracts",
     "chart.js": "^4.5.1",
     "file-saver": "^2.0.5",
+    "jspdf": "^4.2.1",
     "papaparse": "^5.5.4",
     "pdfjs-dist": "^5.6.205",
     "pptxgenjs": "^4.0.1",

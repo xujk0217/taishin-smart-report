@@ -50,6 +50,7 @@ export function PreviewStage({ slides, computeResult, onExport, exporting, onSli
   const [editing, setEditing] = useState(false);
   const [editFeedback, setEditFeedback] = useState<EditResult | null>(null);
   const [exportingXlsx, setExportingXlsx] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
   const mainRef = useRef<HTMLDivElement>(null);
   const thumbRefs = useRef<(HTMLDivElement | null)[]>([]);
 
@@ -140,6 +141,27 @@ export function PreviewStage({ slides, computeResult, onExport, exporting, onSli
     }
   };
 
+  const downloadPdf = async () => {
+    setExportingPdf(true);
+    try {
+      const { exportPDF } = await import('../utils/pdf-exporter');
+      await exportPDF(slides, computeResult);
+    } catch (err: any) {
+      alert('PDF 匯出失敗：' + (err?.message ?? err));
+    } finally {
+      setExportingPdf(false);
+    }
+  };
+
+  const downloadCsv = () => {
+    try {
+      // Sync import is fine since it's tiny
+      import('../utils/csv-exporter').then(({ exportCSV }) => exportCSV(computeResult));
+    } catch (err: any) {
+      alert('CSV 匯出失敗：' + (err?.message ?? err));
+    }
+  };
+
   if (!slides.length) {
     return (
       <div className="card">
@@ -180,9 +202,25 @@ export function PreviewStage({ slides, computeResult, onExport, exporting, onSli
               className="btn btn-sm btn-outline"
               onClick={downloadEvidence}
               disabled={exportingXlsx || !computeResult}
-              title="匯出可稽核的來源證據 Excel"
+              title="匯出來源證據 Excel"
             >
-              {exportingXlsx ? '產生中...' : '來源附件 XLSX'}
+              {exportingXlsx ? '...' : 'XLSX 附件'}
+            </button>
+            <button
+              className="btn btn-sm btn-outline"
+              onClick={downloadPdf}
+              disabled={exportingPdf}
+              title="匯出簡報 PDF"
+            >
+              {exportingPdf ? '...' : 'PDF'}
+            </button>
+            <button
+              className="btn btn-sm btn-outline"
+              onClick={downloadCsv}
+              disabled={!computeResult}
+              title="匯出原始數據 CSV"
+            >
+              CSV
             </button>
             <button className="btn btn-primary" onClick={onExport} disabled={exporting}>
               {exporting ? '匯出中...' : '匯出 PPTX'}
