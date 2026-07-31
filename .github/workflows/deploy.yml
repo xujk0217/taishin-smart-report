@@ -97,6 +97,14 @@ jobs:
         working-directory: apps/web
         run: node scripts/verify-guardrails.mjs
 
+      - name: Verify truncated JSON recovery
+        working-directory: apps/web
+        run: node scripts/verify-json-repair.mjs
+
+      - name: Verify IME Enter handling
+        working-directory: apps/web
+        run: node scripts/verify-ime.mjs
+
       - name: Regression suite
         working-directory: apps/web
         run: node test-regression.mjs
@@ -104,6 +112,7 @@ jobs:
       - name: Build
         working-directory: apps/web
         env:
+          VITE_OPENCODE_KEY: ${{ secrets.VITE_OPENCODE_KEY }}
           VITE_GROQ_KEY: ${{ secrets.VITE_GROQ_KEY }}
         run: npm run build
 
@@ -111,8 +120,21 @@ jobs:
         working-directory: apps/web
         run: cp -r public/template-slides dist/
 
+      # Deploying needs VERCEL_TOKEN, VERCEL_ORG_ID and VERCEL_PROJECT_ID.
+      # Without them the job still proves the build and test suites pass.
+      - name: Check Vercel credentials
+        id: vercel_creds
+        run: |
+          if [ -n "${{ secrets.VERCEL_TOKEN }}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::VERCEL_TOKEN not set — skipping deploy. Build and tests passed."
+          fi
+
       - name: Deploy to Vercel
-        working-directory: apps/web/dist
+        if: steps.vercel_creds.outputs.available == 'true'
+        working-directory: apps/web
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}

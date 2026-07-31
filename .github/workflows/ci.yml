@@ -79,6 +79,14 @@ jobs:
         working-directory: apps/web
         run: node scripts/verify-guardrails.mjs
 
+      - name: Truncated JSON recovery
+        working-directory: apps/web
+        run: node scripts/verify-json-repair.mjs
+
+      - name: IME Enter handling
+        working-directory: apps/web
+        run: node scripts/verify-ime.mjs
+
       - name: Known-error regression suite
         working-directory: apps/web
         run: node test-regression.mjs
