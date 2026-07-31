@@ -139,6 +139,8 @@ export function extractContent(response: any): string {
 
 const MAX_RETRIES = 2;
 const RETRY_DELAY_MS = 3000;
+/** Give up before the serverless gateway's own limit so retries stay useful. */
+const REQUEST_TIMEOUT_MS = 100_000;
 
 async function callProvider(
   provider: Provider & { resolvedKey: string },
@@ -160,14 +162,31 @@ async function callProvider(
     }
 
     try {
-      const response = await fetch(provider.url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${provider.resolvedKey}`,
-        },
-        body: JSON.stringify(body),
-      });
+      // Abort before the serverless gateway does, so the retry path stays in
+      // our control instead of surfacing an opaque 504.
+      const controller = new AbortController();
+      const abortTimer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+      let response: Response;
+      try {
+        response = await fetch(provider.url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${provider.resolvedKey}`,
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(abortTimer);
+      }
+
+      if (response.status === 504 || response.status === 502) {
+        console.warn(`[LLM:${provider.name}] Gateway timeout (${response.status}). Retrying...`);
+        lastError = new Error(`Gateway timeout ${response.status}`);
+        continue;
+      }
 
       if (response.status === 429) {
         const retryAfter = response.headers.get('retry-after');

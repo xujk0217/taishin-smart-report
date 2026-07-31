@@ -296,7 +296,7 @@ export async function analyzeAudience(
   const parsed = await aiJSON<Partial<AudienceContext>>(
     BRIEF_SYSTEM,
     `使用者的需求原文：\n${prompt}\n\n可用資料概要：\n${excelSummary}\n\n請解讀這份需求。`,
-    4000,
+    8000,
     'brief',
   );
 
@@ -416,7 +416,7 @@ export async function discoverMetrics(
   const extracted = await aiJSON<{ requestedMetrics: string[] }>(
     EXTRACT_SYSTEM,
     `使用者需求原文：\n${prompt}`,
-    2500,
+    6000,
     'extract',
   );
   const requested = (extracted?.requestedMetrics ?? []).filter(m => !isPlaceholder(m));
@@ -464,7 +464,7 @@ ${excelSummary}
 ${missing.map((m, i) => `${i + 1}. ${m}`).join('\n')}
 
 已經處理過的指標（不要重複）：${covered.join('、') || '無'}`,
-      5000,
+      8000,
       'supplement',
     );
 
@@ -558,7 +558,7 @@ ${prompt}
 
 請產出 ${target} 個洞察，每個重點面向都要被涵蓋。
 dataPoints 每筆一句話即可，implication 與 recommendation 各控制在 60 字以內，避免輸出被截斷。`,
-    16000,
+    12000,
     'insights',
   );
 
@@ -590,102 +590,87 @@ function buildLayoutBudget(audience: AudienceContext, insightCount: number) {
   };
 }
 
-const BLUEPRINT_SYSTEM = `你是簡報架構設計師，要把分析結果編排成一份可以直接上台講的簡報。
+
+const OUTLINE_SYSTEM = `你是簡報架構設計師。先規劃整份簡報的段落大綱，不要展開到每一頁。
 
 ## 設計邏輯
+1. 結論先行：封面與目錄之後，先給一頁主要結論
+2. 敘事弧線：現況定位 → 關鍵發現 → 成因拆解 → 策略建議
+3. 每個段落只承擔一個角色，段落名稱要有訊息
+4. 受眾調整：executive 重結論與建議，technical 補方法論與資料限制
 
-1. 結論先行
-   封面之後先給主要結論，讓聽眾在前三頁就知道重點，後面才是支撐論證。
+## 段落規劃規則
+- 第一個段落固定是「開場」，含封面、目錄、主要結論共 3 頁
+- 中間 2 到 4 個分析段落，每段 contentPages 為 2 到 4
+- 倒數第二個段落是結論與建議
+- 最後一個段落是「結語」，只有封底 1 頁
+- 每個分析段落要指定它承接哪些洞察主題（insightTopics）
 
-2. 敘事弧線
-   現況定位 → 關鍵發現 → 成因拆解 → 策略建議。每個段落只承擔一個角色。
+輸出範例（格式示範，內容依實際分析結果重新規劃）：
+{
+  "narrative": "台新與第四名差距縮小至 1.3 個百分點，明年是搶進前四的窗口",
+  "sections": [
+    { "title": "開場", "purpose": "兩頁內讓主管掌握全局與主要結論", "contentPages": 1, "insightTopics": [] },
+    { "title": "市場定位", "purpose": "用市占與排名確立台新目前的競爭位置", "contentPages": 3, "insightTopics": ["簽帳金額市占率競爭態勢"] },
+    { "title": "成長動能", "purpose": "拆解月增率與消費力的成長來源", "contentPages": 2, "insightTopics": ["簽帳金額月增率表現"] },
+    { "title": "結論與建議", "purpose": "收斂成可執行的優先行動", "contentPages": 2, "insightTopics": [] },
+    { "title": "結語", "purpose": "結束", "contentPages": 0, "insightTopics": [] }
+  ]
+}`;
 
-3. 一頁一個訊息
-   每頁的 message 欄位是這頁唯一想讓聽眾記住的句子，必須具體且含數字。
-   頁面標題就是這個訊息的濃縮，不可以只寫「數據分析」、「市占率」這種沒有訊息的標籤。
+const SECTION_PAGES_SYSTEM = `你是簡報架構設計師。把一個段落展開成具體的頁面。
 
-4. 數據與洞察成對
-   同一頁要同時有數據元素（chart／kpi_block／comparison／table）和解讀元素
-   （insight／text_block），讓聽眾看到證據也聽到結論。
+## 規則
+1. 一頁一個訊息：message 是這頁唯一想讓聽眾記住的句子，必須具體且含數字
+2. pageTitle 是這個訊息的濃縮。不可以只寫「數據分析」、「市占率」這種沒有訊息的標籤
+3. 數據與洞察成對：同一頁要有數據元素（chart／kpi_block／comparison／table）
+   也要有解讀元素（insight／text_block）
+4. 視覺節奏：同一段落內不要每頁都用一樣的元素組合
+5. content 頁的 elements 列 3 到 5 個
+6. 用到數據的頁面在 metricIds 標明，承接洞察的在 insightTopics 標明
 
-5. 視覺節奏
-   不要連續三頁都是同一種版面。圖表頁、比較頁、文字論述頁交錯安排。
-
-6. 受眾調整
-   executive：結論與建議佔比高，數據只留最關鍵的
-   detailed：數據、解讀、建議三者平衡
-   technical：補上計算方法、假設與資料限制
-
-## 版面類型
-- cover：封面，只放報告標題與副標
-- toc：目錄，列出所有段落名稱
-- section_title：段落標題頁，放段落名稱與一句段落簡述
-- content：內容頁，放所有數據與分析
-- backcover：封底
-
-## 可用的頁面元素
+## 可用元素
 heading、chart、kpi_block、comparison、table、insight、text_block、bullet_list、source
 
-## 結構規則
-- 第 1 頁 cover，第 2 頁 toc，最後一頁 backcover
-- 每個段落的第一頁是 section_title
-- 每個段落後面至少接 1 頁 content
-- content 頁的 elements 要列 3 到 5 個
-- 用到數據的頁面要在 metricIds 標明引用哪些指標
-- 承接洞察的頁面要在 insightTopics 標明對應哪些洞察主題
-- 倒數第二個段落是結論與建議
-
-輸出範例（格式示範，內容要依實際分析結果重新設計）：
+輸出範例（格式示範，內容依實際段落重新設計）：
 {
-  "totalPages": 12,
-  "narrative": "台新在簽帳金額市占穩居第五，與第四名差距已縮小到 1.3 個百分點，接下來一年是搶進前四的窗口",
-  "sections": [
+  "pages": [
     {
-      "title": "開場",
-      "purpose": "讓主管在前兩頁掌握全局與報告範圍",
-      "pages": [
-        {
-          "pageTitle": "114 年度信用卡市場競爭分析",
-          "layout": "cover",
-          "message": "回顧 114 年度台新信用卡市場表現並提出前進前四的策略",
-          "elements": ["title", "subtitle"]
-        },
-        {
-          "pageTitle": "目錄",
-          "layout": "toc",
-          "message": "本報告分為市場定位、成長動能、策略建議三個部分",
-          "elements": ["heading", "bullet_list"]
-        }
-      ]
+      "pageTitle": "與第四名差距縮小至 1.30 個百分點",
+      "layout": "content",
+      "message": "台新 10.67% 對玉山 11.97%，差距是三年來最小",
+      "elements": ["heading", "chart", "kpi_block", "insight", "source"],
+      "metricIds": ["m1"],
+      "insightTopics": ["簽帳金額市占率競爭態勢"]
     },
     {
-      "title": "市場定位",
-      "purpose": "用市占與排名確立台新目前的競爭位置",
-      "pages": [
-        {
-          "pageTitle": "市場定位：台新市占 10.67%，排名第五",
-          "layout": "section_title",
-          "message": "台新在 34 家銀行中位居第五，前五名合計掌握七成市場",
-          "elements": ["title", "subtitle"]
-        },
-        {
-          "pageTitle": "與第四名差距縮小至 1.3 個百分點",
-          "layout": "content",
-          "message": "台新 10.67% 對玉山 11.97%，差距是三年來最小",
-          "elements": ["heading", "chart", "kpi_block", "insight", "source"],
-          "metricIds": ["m1"],
-          "insightTopics": ["簽帳金額市占率競爭態勢"]
-        }
-      ]
+      "pageTitle": "前五大銀行合計掌握七成市場",
+      "layout": "content",
+      "message": "中信與國泰合計 36.55%，市場集中度持續升高",
+      "elements": ["heading", "comparison", "text_block", "source"],
+      "metricIds": ["m1"],
+      "insightTopics": ["簽帳金額市占率競爭態勢"]
     }
   ]
 }`;
 
+interface OutlineSection {
+  title: string;
+  purpose: string;
+  contentPages: number;
+  insightTopics?: string[];
+}
+
+/**
+ * Designs the deck in two phases so no single request approaches the gateway
+ * timeout: a cheap section outline, then one small expansion per section.
+ */
 export async function designSlideArchitecture(
   audience: AudienceContext,
   metrics: MetricSpec[],
   insights: TopicInsight[],
   prompt: string,
+  onProgress?: (detail: string) => void,
 ): Promise<SlideArchitecture> {
   const supported = metrics.filter(m => m.supported);
   const budget = buildLayoutBudget(audience, insights.length);
@@ -697,63 +682,172 @@ export async function designSlideArchitecture(
     audience.constraints.length ? `必須遵守：${audience.constraints.join('；')}` : '',
   ].filter(Boolean).join('\n');
 
-  const parsed = await aiJSON<SlideArchitecture>(
-    BLUEPRINT_SYSTEM,
+  const insightDigest = insights
+    .map(i => `【${i.topic}】${i.keyFinding}（建議圖表：${i.chartSuggestion ?? '未指定'}）`)
+    .join('\n');
+
+  // ── Phase A: section outline ──
+  onProgress?.('規劃段落大綱');
+  const outline = await aiJSON<{ narrative: string; sections: OutlineSection[] }>(
+    OUTLINE_SYSTEM,
     `## 報告對象
 受眾：${audience.audience}
 目的：${audience.purpose}
-語氣：${audience.tone}
 深度：${audience.depth}
 重點面向：${audience.focusAreas.join('、')}
 
 ## 頁數要求
 ${budget.note}
+段落頁數加總（含封面、目錄、主要結論、各段落標題頁、封底）必須等於 ${budget.total} 頁。
 
 ${designNotes ? `## 使用者的設計要求\n${designNotes}\n` : ''}
-## 可用指標（${supported.length} 個）
-${supported.map(m => `[${m.id}] ${m.name}（${m.category}）— ${m.relevanceToAudience || m.definition}`).join('\n')}
-
 ## 已產出的洞察（${insights.length} 個）
-${insights.map(i => `【${i.topic}】
+${insightDigest}
+
+## 使用者需求原文
+${prompt}
+
+請規劃段落大綱。purpose 控制在 40 字以內。`,
+    // Small output, but the reasoning model needs headroom before it starts
+    // emitting JSON; too low a cap truncates mid-object.
+    10000,
+    'outline',
+  );
+
+  const outlineSections = (outline?.sections ?? []).filter(
+    s => s?.title && !isPlaceholder(s.title),
+  );
+
+  if (outlineSections.length === 0) {
+    console.warn('[Blueprint] outline unusable, building from insights');
+    return buildFallbackArchitecture(audience, insights, supported, budget.total);
+  }
+
+  const narrative = outline?.narrative && !isPlaceholder(outline.narrative)
+    ? outline.narrative
+    : `${audience.audience}：${audience.purpose}`;
+
+  // ── Phase B: expand each section ──
+  const sections: SlideArchitecture['sections'] = [];
+
+  for (let idx = 0; idx < outlineSections.length; idx++) {
+    const s = outlineSections[idx];
+    const isFirst = idx === 0;
+    const isLast = idx === outlineSections.length - 1;
+    onProgress?.(`展開段落 ${idx + 1}/${outlineSections.length}：${s.title}`);
+
+    // Opening and closing sections are structural; build them directly.
+    if (isFirst) {
+      const pages: BlueprintPage[] = [
+        {
+          pageTitle: audience.purpose,
+          layout: 'cover',
+          message: narrative,
+          elements: ['title', 'subtitle'],
+        },
+        {
+          pageTitle: '目錄',
+          layout: 'toc',
+          message: `本報告分為 ${outlineSections.length - 2} 個分析主題與結論建議`,
+          elements: ['heading', 'bullet_list'],
+        },
+      ];
+      if ((s.contentPages ?? 1) > 0 && insights.length > 0) {
+        pages.push({
+          pageTitle: insights[0].keyFinding.slice(0, 40),
+          layout: 'content',
+          message: narrative,
+          elements: ['heading', 'kpi_block', 'insight', 'source'],
+          metricIds: supported.slice(0, 3).map(m => m.id),
+          insightTopics: insights.slice(0, 2).map(i => i.topic),
+        });
+      }
+      sections.push({ title: s.title, purpose: s.purpose, pages });
+      continue;
+    }
+
+    if (isLast) {
+      sections.push({
+        title: s.title,
+        purpose: s.purpose,
+        pages: [{
+          pageTitle: '謝謝',
+          layout: 'backcover',
+          message: '台新新光金控',
+          elements: ['title', 'subtitle'],
+        }],
+      });
+      continue;
+    }
+
+    // Analysis and conclusion sections get a section title page plus AI-designed content.
+    const wanted = Math.max(1, Math.min(s.contentPages ?? 2, 4));
+    const relevant = insights.filter(i => (s.insightTopics ?? []).includes(i.topic));
+    const pool = relevant.length > 0 ? relevant : insights;
+
+    const expanded = await aiJSON<{ pages: BlueprintPage[] }>(
+      SECTION_PAGES_SYSTEM,
+      `## 這個段落
+名稱：${s.title}
+目的：${s.purpose}
+要產出 ${wanted} 頁 content
+
+## 報告對象
+${audience.audience}（${audience.depth}）
+${designNotes ? `\n## 設計要求\n${designNotes}\n` : ''}
+## 這個段落要承接的洞察
+${pool.map(i => `【${i.topic}】
   發現：${i.keyFinding}
   數據：${i.dataPoints.join('；')}
   意涵：${i.implication}
   建議：${i.recommendation}
   建議圖表：${i.chartSuggestion ?? '未指定'}`).join('\n\n')}
 
-## 使用者需求原文
-${prompt}
+## 可引用的指標
+${supported.map(m => `[${m.id}] ${m.name}（${m.category}）`).join('\n')}
 
-請設計簡報架構。每個洞察都要有對應頁面，每個重要指標都要被呈現，總頁數必須符合上面的頁數要求。
-purpose 與 message 各控制在 50 字以內，避免輸出被截斷。`,
-    20000,
-    'blueprint',
-  );
+請設計這個段落的 ${wanted} 頁 content。message 控制在 50 字以內。`,
+      10000,
+      `section:${s.title}`,
+    );
 
-  const sections = (parsed?.sections ?? []).filter(
-    s => s?.title && !isPlaceholder(s.title) && Array.isArray(s.pages) && s.pages.length > 0,
-  );
+    const contentPages = (expanded?.pages ?? [])
+      .filter(p => p?.pageTitle && !isPlaceholder(p.pageTitle))
+      .slice(0, wanted)
+      .map(p => ({ ...p, layout: 'content' as const }));
 
-  if (sections.length === 0) {
-    console.warn('[Blueprint] AI design unusable, building from insights');
-    return buildFallbackArchitecture(audience, insights, supported, budget.total);
+    // If the model gave nothing usable, derive pages from the insights.
+    const derived: BlueprintPage[] = contentPages.length > 0
+      ? contentPages
+      : pool.slice(0, wanted).map(i => ({
+          pageTitle: i.keyFinding.slice(0, 40),
+          layout: 'content' as const,
+          message: i.keyFinding,
+          elements: ['heading', 'chart', 'insight', 'source'],
+          metricIds: supported.slice(0, 2).map(m => m.id),
+          insightTopics: [i.topic],
+        }));
+
+    sections.push({
+      title: s.title,
+      purpose: s.purpose,
+      pages: [
+        {
+          pageTitle: s.title,
+          layout: 'section_title',
+          message: pool[0]?.keyFinding ?? s.purpose,
+          elements: ['title', 'subtitle'],
+          insightTopics: (s.insightTopics ?? []).slice(0, 3),
+        },
+        ...derived,
+      ],
+    });
   }
 
-  const cleaned = sections.map(s => ({
-    ...s,
-    pages: s.pages.filter(p => p?.pageTitle && !isPlaceholder(p.pageTitle)),
-  })).filter(s => s.pages.length > 0);
+  const pageCount = sections.reduce((sum, s) => sum + s.pages.length, 0);
+  console.log(`[Blueprint] ${sections.length} sections / ${pageCount} pages (target ${budget.total})`);
 
-  const pageCount = cleaned.reduce((sum, s) => sum + s.pages.length, 0);
-  console.log(`[Blueprint] ${cleaned.length} sections / ${pageCount} pages (target ${budget.total})`);
-
-  return {
-    totalPages: pageCount,
-    narrative: parsed?.narrative && !isPlaceholder(parsed.narrative)
-      ? parsed.narrative
-      : `${audience.audience}：${audience.purpose}`,
-    sections: cleaned,
-  };
+  return { totalPages: pageCount, narrative, sections };
 }
 
 /**
@@ -912,7 +1006,10 @@ export async function runAIPipeline(
   });
 
   onProgress?.({ step: 4, total: TOTAL, label: '設計簡報架構' });
-  const architecture = await designSlideArchitecture(audience, metrics, insights, prompt);
+  const architecture = await designSlideArchitecture(
+    audience, metrics, insights, prompt,
+    detail => onProgress?.({ step: 4, total: TOTAL, label: '設計簡報架構', detail }),
+  );
   onProgress?.({
     step: 4, total: TOTAL, label: '設計簡報架構',
     detail: `${architecture.totalPages} 頁／${architecture.sections.length} 段落`,
