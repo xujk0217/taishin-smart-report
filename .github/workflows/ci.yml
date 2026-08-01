@@ -10,6 +10,9 @@ env:
   NODE_VERSION: '20'
   PYTHON_VERSION: '3.11'
 
+permissions:
+  contents: read
+
 jobs:
   # ─── Python Tests (Parser, Validation, Bedrock) ─────────────
   test-python:
@@ -45,12 +48,12 @@ jobs:
 
       - name: Typecheck contracts
         working-directory: packages/contracts
-        run: npm install && npx tsc --noEmit
+        run: npm ci && npx tsc --noEmit
 
       - name: Typecheck render-pptx
         working-directory: services/render-pptx
         run: |
-          npm install
+          npm ci
           npx tsc --noEmit
 
   # ─── Frontend: typecheck, build, and verification suites ────
@@ -65,7 +68,7 @@ jobs:
 
       - name: Install
         working-directory: apps/web
-        run: npm install
+        run: npm ci
 
       - name: Typecheck
         working-directory: apps/web
@@ -159,7 +162,7 @@ jobs:
 
       - name: Install render-pptx deps
         working-directory: services/render-pptx
-        run: npm install
+        run: npm ci
 
       - name: Generate PPTX
         working-directory: services/render-pptx
@@ -185,8 +188,8 @@ jobs:
           name: generated-pptx
           path: services/parser-metrics/output/output.pptx
 
-  # ─── CDK Synth (validate infra code) ────────────────────────
-  cdk-synth:
+  # ─── CDK unit validation (AWS synthesis runs in deploy.yml) ─
+  cdk-validation:
     runs-on: ubuntu-latest
     needs: [typecheck-ts]
     steps:
@@ -195,11 +198,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: infra/cdk/package-lock.json
 
-      - name: Install CDK deps
+      - name: Install locked CDK dependencies
         working-directory: infra/cdk
-        run: npm install
+        run: npm ci --ignore-scripts
 
-      - name: CDK Synth
+      - name: Type check CDK source
         working-directory: infra/cdk
-        run: npx cdk synth --quiet 2>&1 || echo "CDK synth requires AWS context, skipping in CI for now"
+        run: npm run typecheck
+
+      - name: Run private-foundation assertions
+        working-directory: infra/cdk
+        run: npm test

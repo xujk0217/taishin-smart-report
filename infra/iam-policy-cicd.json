@@ -2,134 +2,41 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "CDKBootstrapAndDeploy",
+      "Sid": "VerifyWorkshopDeploymentIdentity",
       "Effect": "Allow",
       "Action": [
-        "cloudformation:*",
+        "sts:GetCallerIdentity"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReadRequiredCdkContext",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeAvailabilityZones"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReadCdkBootstrapVersion",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter"
+      ],
+      "Resource": "arn:aws:ssm:us-east-1:450567357211:parameter/cdk-bootstrap/hnb659fds/version"
+    },
+    {
+      "Sid": "AssumeOnlyWorkshopCdkBootstrapRoles",
+      "Effect": "Allow",
+      "Action": [
         "sts:AssumeRole"
       ],
-      "Resource": "*"
-    },
-    {
-      "Sid": "S3FreeTier",
-      "Effect": "Allow",
-      "Action": [
-        "s3:*"
-      ],
       "Resource": [
-        "arn:aws:s3:::smart-report-*",
-        "arn:aws:s3:::smart-report-*/*",
-        "arn:aws:s3:::cdk-*",
-        "arn:aws:s3:::cdk-*/*"
+        "arn:aws:iam::450567357211:role/cdk-hnb659fds-lookup-role-450567357211-us-east-1",
+        "arn:aws:iam::450567357211:role/cdk-hnb659fds-deploy-role-450567357211-us-east-1",
+        "arn:aws:iam::450567357211:role/cdk-hnb659fds-file-publishing-role-450567357211-us-east-1",
+        "arn:aws:iam::450567357211:role/cdk-hnb659fds-image-publishing-role-450567357211-us-east-1"
       ]
-    },
-    {
-      "Sid": "DynamoDBFreeTier",
-      "Effect": "Allow",
-      "Action": [
-        "dynamodb:*"
-      ],
-      "Resource": "arn:aws:dynamodb:*:960014610613:table/smart-report-*"
-    },
-    {
-      "Sid": "LambdaFreeTier",
-      "Effect": "Allow",
-      "Action": [
-        "lambda:*"
-      ],
-      "Resource": "arn:aws:lambda:*:960014610613:function:SmartReport*"
-    },
-    {
-      "Sid": "StepFunctionsFreeTier",
-      "Effect": "Allow",
-      "Action": [
-        "states:*"
-      ],
-      "Resource": "arn:aws:states:*:960014610613:stateMachine:SmartReport*"
-    },
-    {
-      "Sid": "APIGateway",
-      "Effect": "Allow",
-      "Action": [
-        "apigateway:*",
-        "execute-api:*"
-      ],
-      "Resource": "*"
-    },
-    {
-      "Sid": "IAMForCDK",
-      "Effect": "Allow",
-      "Action": [
-        "iam:*Role*",
-        "iam:*Policy*",
-        "iam:PassRole",
-        "iam:GetRole",
-        "iam:CreateRole",
-        "iam:DeleteRole",
-        "iam:AttachRolePolicy",
-        "iam:DetachRolePolicy",
-        "iam:PutRolePolicy",
-        "iam:DeleteRolePolicy"
-      ],
-      "Resource": "*"
-    },
-    {
-      "Sid": "KMS",
-      "Effect": "Allow",
-      "Action": [
-        "kms:Create*",
-        "kms:Describe*",
-        "kms:Enable*",
-        "kms:List*",
-        "kms:Put*",
-        "kms:Update*",
-        "kms:Get*",
-        "kms:Tag*",
-        "kms:ScheduleKeyDeletion"
-      ],
-      "Resource": "*"
-    },
-    {
-      "Sid": "CloudWatchLogs",
-      "Effect": "Allow",
-      "Action": [
-        "logs:*"
-      ],
-      "Resource": "arn:aws:logs:*:960014610613:log-group:/aws/lambda/SmartReport*"
-    },
-    {
-      "Sid": "ECRForLambdaContainers",
-      "Effect": "Allow",
-      "Action": [
-        "ecr:*"
-      ],
-      "Resource": "arn:aws:ecr:*:960014610613:repository/smart-report*"
-    },
-    {
-      "Sid": "BedrockFreeTier",
-      "Effect": "Allow",
-      "Action": [
-        "bedrock:InvokeModel",
-        "bedrock:InvokeModelWithResponseStream"
-      ],
-      "Resource": "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-haiku*"
-    },
-    {
-      "Sid": "SSMForCDK",
-      "Effect": "Allow",
-      "Action": [
-        "ssm:GetParameter",
-        "ssm:PutParameter"
-      ],
-      "Resource": "arn:aws:ssm:*:960014610613:parameter/cdk-*"
-    },
-    {
-      "Sid": "EventBridge",
-      "Effect": "Allow",
-      "Action": [
-        "events:*"
-      ],
-      "Resource": "arn:aws:events:*:960014610613:rule/SmartReport*"
     }
   ]
 }
