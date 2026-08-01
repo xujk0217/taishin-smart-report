@@ -235,7 +235,7 @@ function App() {
       <header className="header">
         <div>
           <h1>智匯數據簡報神器</h1>
-          <div className="subtitle">台新新光金控 AI 報表轉簡報系統</div>
+          <div className="subtitle">AI 報表轉簡報系統</div>
         </div>
         <div style={{ fontSize: '0.8rem', opacity: 0.8 }}>
           Powered by OpenCode · DeepSeek V4 Flash
@@ -294,11 +294,11 @@ function App() {
 function generateMockPlan(prompt: string): AnalysisPlan {
   return {
     formulas: [
-      { id: 'f1', name: '簽帳金額市占率', definition: 'entity_amount / total_amount × 100', supported: true },
-      { id: 'f2', name: '流通卡數市占率', definition: 'entity_cards / total_cards × 100', supported: true },
+      { id: 'f1', name: '指標A市占率', definition: 'entity_amount / total_amount × 100', supported: true },
+      { id: 'f2', name: '指標B市占率', definition: 'entity_cards / total_cards × 100', supported: true },
       { id: 'f3', name: '月增率 (MoM)', definition: '(current - previous) / previous × 100', supported: true },
       { id: 'f4', name: '有效卡率', definition: 'active_cards / total_cards × 100', supported: true },
-      { id: 'f5', name: '單卡平均簽帳金額', definition: 'total_amount / active_cards', supported: true },
+      { id: 'f5', name: '單位平均貢獻', definition: 'total_amount / active_cards', supported: true },
       { id: 'f6', name: '排名', definition: '各銀行依數值由大至小排列', supported: true },
     ],
     unsupported: [
@@ -311,9 +311,9 @@ function generateMockPlan(prompt: string): AnalysisPlan {
       '排名依數值由大至小排列',
     ],
     suggestedSlides: [
-      '封面：台新信用卡年度市場分析',
+      '封面：年度市場分析',
       '市占率趨勢圖（折線圖）',
-      '簽帳金額排名（柱狀圖）',
+      '排名比較（柱狀圖）',
       '月增率變化（折線圖）',
       '有效卡率比較（柱狀圖）',
       '競爭分析洞察',

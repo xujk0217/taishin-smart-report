@@ -13,7 +13,7 @@ import { traceElement } from './provenance';
 export async function exportEvidenceWorkbook(
   slides: SlideSpec[],
   result: ComputeResult | null,
-  fileName = '台新信用卡分析報告_來源附件.xlsx',
+  fileName = '分析報告_來源附件.xlsx',
 ): Promise<void> {
   if (!result) throw new Error('沒有可匯出的計算結果');
 

@@ -23,11 +23,11 @@ export async function generatePlanWithAI(
   fileNames: string[],
   excelSummary?: string,
 ): Promise<AIPlan> {
-  const systemPrompt = `你是台新新光金控的 AI 數據分析顧問。使用者上傳了信用卡業務的 Excel 報表，你需要分析資料結構並規劃完整的分析方案。
+  const systemPrompt = `你是專業的數據分析顧問。使用者上傳了業務相關的資料，你需要分析資料結構並規劃完整的分析方案。
 
 ## 你的角色
-- 台新新光金控數位金融部門的資深分析師
-- 熟悉台灣信用卡市場、金管會統計資料格式
+- 資深數據分析師
+- 熟悉各類報表與統計格式
 - 目標：為高階主管製作精準的市場分析報告
 
 ## 你的任務
@@ -35,7 +35,7 @@ export async function generatePlanWithAI(
 1. formulas: 可計算的所有指標（包括 id、名稱、公式定義）
 2. unsupported: 因缺少資料而無法計算的指標（含原因）
 3. assumptions: 分析假設（期間格式、金額單位、分母定義等）
-4. suggestedSlides: 建議的簡報頁面標題（8-12 頁）
+4. suggestedSlides: 建議的簡報頁面標題（依內容量決定頁數）
 
 ## 規則
 1. 只建議能從現有資料計算的指標，不可臆測不存在的欄位
@@ -48,10 +48,10 @@ export async function generatePlanWithAI(
 
 ## JSON 格式
 {
-  "formulas": [{"id":"f1","name":"簽帳金額市占率","definition":"個別銀行簽帳金額 / 全體銀行簽帳金額 × 100","supported":true}],
+  "formulas": [{"id":"f1","name":"指標A市占率","definition":"個別實體數值 / 總計數值 × 100","supported":true}],
   "unsupported": [{"name":"年增率(YoY)","reason":"資料僅含 114 年度，缺少 113 年同期資料"}],
   "assumptions": ["期間格式為民國年月（11401 = 114年1月）","金額單位為新台幣百萬元"],
-  "suggestedSlides": ["封面：台新信用卡年度市場分析","市占率趨勢分析（折線圖）","銀行排名比較（柱狀圖）"]
+  "suggestedSlides": ["封面","趨勢分析（折線圖）","排名比較（柱狀圖）","結論與建議"]
 }`;
 
   let userMsg = `使用者上傳了 ${fileNames.length} 份 Excel 檔案。\n\n`;
@@ -88,7 +88,7 @@ export async function generatePlanWithAI(
 
 如果有錯誤，回傳修正後的完整 JSON（同格式）。如果正確，回傳原始 JSON 不做更改。
 只回傳 JSON，不要其他文字。` },
-        { role: 'user', content: `Excel 有這些欄位：金融機構名稱、流通卡數、有效卡數、當月發卡數、當月停卡數、循環信用餘額、未到期分期付款餘額、當月簽帳金額、當月預借現金金額、逾期比率。期間有 11401-11412（12個月）。
+        { role: 'user', content: `以下是使用者實際上傳的資料欄位（從 Excel 結構摘要自動帶入）：
 
 待檢查的計劃：
 ${JSON.stringify(plan, null, 1)}` },

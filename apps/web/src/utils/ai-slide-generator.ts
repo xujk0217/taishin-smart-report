@@ -69,7 +69,7 @@ const API_KEY = import.meta.env.VITE_OPENCODE_KEY || import.meta.env.VITE_GROQ_K
 
 // ─── System Prompt ───────────────────────────────────────────
 
-const SYSTEM_PROMPT = `你是台新新光金控的專業簡報規劃 AI，為高階主管設計信用卡市場分析報告。
+const SYSTEM_PROMPT = `你是專業的簡報規劃 AI，為使用者設計數據分析報告。
 
 ## 頁面結構規則（最重要！）
 
@@ -83,7 +83,7 @@ const SYSTEM_PROMPT = `你是台新新光金控的專業簡報規劃 AI，為高
 3. **段落標題頁**: layout="section_title", background="001"
    - 每個分析主題前要有一頁，只放 title（黑色）+ subtitle（段落簡述）
 4. **封底** (最後一頁): layout="backcover", background="003"
-   - 元素: title="謝謝"（黑色）+ subtitle="台新新光金控"
+   - 元素: title="謝謝"（黑色）+ subtitle="智匯數據簡報神器"
 
 ### 內容頁面
 - layout="content", background="002"
@@ -171,8 +171,8 @@ const SYSTEM_PROMPT = `你是台新新光金控的專業簡報規劃 AI，為高
       "layout": "cover",
       "section": "開場",
       "elements": [
-        { "type": "title", "content": "114 年度信用卡市場競爭分析" },
-        { "type": "subtitle", "content": "34 家銀行 × 12 個月份｜台新新光金控" }
+ { "type": "title", "content": "年度市場數據分析報告" },
+        { "type": "subtitle", "content": "多實體 × 多期間分析｜智匯數據簡報神器" }
       ]
     },
     {
@@ -193,11 +193,11 @@ const SYSTEM_PROMPT = `你是台新新光金控的專業簡報規劃 AI，為高
         { "type": "heading", "content": "與第四名差距縮小至 1.30 個百分點" },
         { "type": "chart", "chartType": "line", "dataKey": "market_share_trend" },
         { "type": "kpi_block", "metrics": [
-          { "label": "台新市占率", "value": "10.67%", "rank": 5 },
+          { "label": "市占率", "value": "10.67%", "rank": 5 },
           { "label": "月增率", "value": "+11.62%", "trend": "↑" }
         ]},
-        { "type": "insight", "content": "台新 10.67% 對玉山 11.97%，差距為三年最小，具備進入前四的條件" },
-        { "type": "source", "content": "金管會信用卡重要資訊揭露 114年1-12月" }
+ { "type": "insight", "content": "重點實體表現接近競爭者，具備突破空間" },
+        { "type": "source", "content": "使用者上傳之資料 114年1-12月" }
       ]
     }
   ]
@@ -369,7 +369,7 @@ function generateFallbackSpec(result: ComputeResult): PresentationSpec {
     {
       page: 1, background: '001', layout: 'cover',
       elements: [
-        { type: 'title', content: '信用卡市場分析報告', position: 'center' },
+        { type: 'title', content: '數據分析報告', position: 'center' },
         { type: 'subtitle', content: `${result.summary.totalEntities} 家銀行 × ${result.summary.totalPeriods} 個月份 · 114年度` },
       ],
     },
@@ -390,10 +390,10 @@ function generateFallbackSpec(result: ComputeResult): PresentationSpec {
     {
       page: 4, background: '002', layout: 'content', section: '市場競爭',
       elements: [
-        { type: 'heading', content: '簽帳金額市占率趨勢' },
+        { type: 'heading', content: '市占率趨勢分析' },
         { type: 'chart', chartType: 'line', dataKey: 'market_share_trend' },
         { type: 'insight', content: '前五大銀行合計市占超過 65%，市場集中度高' },
-        { type: 'source', content: '資料來源：金管會信用卡重要資訊揭露' },
+        { type: 'source', content: '資料來源：使用者上傳之資料' },
       ],
     },
     {
@@ -401,40 +401,40 @@ function generateFallbackSpec(result: ComputeResult): PresentationSpec {
       elements: [
         { type: 'heading', content: '最新月份銀行排名' },
         { type: 'chart', chartType: 'bar', dataKey: 'ranking_latest' },
-        { type: 'comparison', entities: top5.map(m => ({ name: m.entity, value: `${m.value}%`, highlight: m.entity.includes('台新') })) },
-        { type: 'source', content: '資料來源：金管會信用卡重要資訊揭露' },
+        { type: 'comparison', entities: top5.map(m => ({ name: m.entity, value: `${m.value}%`, highlight: m.rank === 5 })) },
+        { type: 'source', content: '資料來源：使用者上傳之資料' },
       ],
     },
     {
       page: 6, background: '001', layout: 'section_title', section: '經營績效',
       elements: [
         { type: 'title', content: '二、經營績效分析' },
-        { type: 'subtitle', content: '月增率、流通卡數與關鍵指標' },
+        { type: 'subtitle', content: '月增率與關鍵指標' },
       ],
     },
     {
       page: 7, background: '002', layout: 'content', section: '經營績效',
       elements: [
-        { type: 'heading', content: '簽帳金額月增率趨勢' },
+        { type: 'heading', content: '月增率趨勢分析' },
         { type: 'chart', chartType: 'line', dataKey: 'mom_trend' },
-        { type: 'text_block', content: '各銀行簽帳金額月增率反映消費動能變化，年末因消費旺季通常呈現正成長。台新12月月增率表現強勁。' },
-        { type: 'insight', content: '台新12月月增率 +11.62%，高於市場平均' },
-        { type: 'source', content: '資料來源：金管會信用卡重要資訊揭露' },
+        { type: 'text_block', content: '各實體的環比成長率反映業務動能變化。重點實體月增率表現強勁。' },
+ { type: 'insight', content: '重點實體月增率高於市場平均' },
+        { type: 'source', content: '資料來源：使用者上傳之資料' },
       ],
     },
     {
       page: 8, background: '002', layout: 'content', section: '經營績效',
       elements: [
-        { type: 'heading', content: '台新關鍵經營指標' },
+ { type: 'heading', content: '重點實體關鍵經營指標' },
         { type: 'kpi_block', metrics: [
-          { label: '簽帳金額市占率', value: `${top5.find(m => m.entity.includes('台新'))?.value ?? 10.67}%`, rank: 5 },
+ { label: '市占率', value: `${top5[4]?.value ?? ''}%`, rank: 5 },
           { label: '月增率', value: '+11.62%', trend: '↑' },
           { label: '排名', value: '第 5 名' },
         ]},
         { type: 'bullet_list', items: [
           '市占率穩定維持 10-11% 區間',
-          '12月消費旺季帶動簽帳金額成長',
-          '流通卡數穩定，有效卡率維持健康水準',
+          '旺季帶動成長',
+          '規模穩定，效率指標維持健康水準',
         ]},
       ],
     },
@@ -450,8 +450,8 @@ function generateFallbackSpec(result: ComputeResult): PresentationSpec {
       elements: [
         { type: 'heading', content: '策略建議' },
         { type: 'bullet_list', items: [
-          '台新市占率穩定在第 5 名，與第 4 名差距不到 1 個百分點',
-          '市場前三名（中信、國泰、富邦）合計超過 49%',
+          '市占率穩定在第 5 名，與第 4 名差距不到 1 個百分點',
+          '市場前三名合計超過 49%',
           '建議：深耕高消費族群，把握年末旺季',
           '建議：關注有效卡率提升，降低停卡率',
           '建議：強化數位支付場景，提升年輕族群滲透率',
@@ -467,13 +467,13 @@ function generateFallbackSpec(result: ComputeResult): PresentationSpec {
       page: 11, background: '003', layout: 'backcover',
       elements: [
         { type: 'title', content: '謝謝', position: 'center' },
-        { type: 'subtitle', content: '台新新光金控 ｜ 智匯數據簡報神器' },
+        { type: 'subtitle', content: '智匯數據簡報神器 ｜ 智匯數據簡報神器' },
       ],
     },
   ];
 
   return {
-    title: '信用卡市場分析報告',
+    title: '數據分析報告',
     slides,
     metadata: { totalPages: slides.length, dataSource: 'Excel', generatedAt: new Date().toISOString() },
   };

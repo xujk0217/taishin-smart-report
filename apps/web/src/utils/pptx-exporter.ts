@@ -65,7 +65,7 @@ async function loadBackground(bg: BackgroundTemplate): Promise<string | null> {
 export async function exportPptx(
   slides: SlideSpec[],
   result: ComputeResult | null,
-  fileName = '台新信用卡分析報告.pptx',
+  fileName = '分析報告.pptx',
 ): Promise<void> {
   if (!slides || slides.length === 0) {
     throw new Error('沒有可匯出的投影片');
@@ -74,9 +74,9 @@ export async function exportPptx(
   const pptx = new PptxGenJS();
   pptx.layout = 'LAYOUT_WIDE';
   pptx.author = '智匯數據簡報神器';
-  pptx.company = '台新新光金控';
-  pptx.subject = '信用卡市場分析報告';
-  pptx.title = findTitle(slides) ?? '信用卡市場分析報告';
+  pptx.company = '智匯數據簡報神器';
+  pptx.subject = '數據分析報告';
+  pptx.title = findTitle(slides) ?? '數據分析報告';
 
   // Preload the three backgrounds once instead of per slide.
   const backgrounds: Partial<Record<BackgroundTemplate, string | null>> = {};

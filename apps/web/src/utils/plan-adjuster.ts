@@ -7,7 +7,7 @@ import type { AnalysisPlan } from '../types';
 
 const KEY = import.meta.env.VITE_OPENCODE_KEY || import.meta.env.VITE_GROQ_KEY || '';
 
-const SYSTEM = `你是台新金控的分析計劃調整助理。使用者會告訴你想怎麼修改目前的分析計劃。
+const SYSTEM = `你是分析計劃調整助理。使用者會告訴你想怎麼修改目前的分析計劃。
 
 你必須回傳修改後的完整 JSON。formulas 與 suggestedSlides 要包含所有項目（含沒被修改的），
 不可用省略號代替。

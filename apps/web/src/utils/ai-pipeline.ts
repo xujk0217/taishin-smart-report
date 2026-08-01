@@ -259,7 +259,7 @@ async function aiJSON<T>(
 
 // ─── Step 1: Brief ───────────────────────────────────────────
 
-const BRIEF_SYSTEM = `你是台新新光金控的策略顧問，負責解讀使用者的簡報需求。
+const BRIEF_SYSTEM = `你是專業的數據分析顧問，負責解讀使用者的簡報需求。
 
 你要從需求文字中判斷：
 1. audience — 這份報告要給誰看。使用者沒說就依內容推斷最合理的對象
@@ -277,13 +277,13 @@ const BRIEF_SYSTEM = `你是台新新光金控的策略顧問，負責解讀使�
 
 輸出範例（這是格式示範，內容要換成你的判斷）：
 {
-  "audience": "信用卡事業部副總經理",
-  "purpose": "回顧 114 年度信用卡市場表現並提出下年度競爭策略",
+  "audience": "事業部主管",
+  "purpose": "年度市場表現回顧與策略規劃",
   "tone": "正式策略報告，以數據支撐論點，強調競爭定位與可執行建議",
-  "focusAreas": ["簽帳金額市占率趨勢", "前五大銀行競爭態勢", "有效卡率與消費力"],
+  "focusAreas": ["市占率趨勢", "競爭態勢", "效率指標"],
   "depth": "executive",
   "requestedPageCount": 20,
-  "designDirectives": ["延續台新品牌紅色系", "每頁最多一張主圖表"],
+  "designDirectives": ["品牌色系", "每頁最多一張主圖表"],
   "narrativeStyle": ["每頁結論先行", "避免專業術語堆疊"],
   "chartPreferences": ["趨勢用折線圖", "排名用橫向柱狀圖"],
   "constraints": ["不做未來預測", "每頁標註資料來源"]
@@ -301,8 +301,8 @@ export async function analyzeAudience(
   );
 
   const fallback: AudienceContext = {
-    audience: '信用卡事業部主管',
-    purpose: '信用卡市場分析報告',
+    audience: '事業部主管',
+    purpose: '市場分析報告',
     tone: '正式策略報告',
     focusAreas: ['市占率', '排名', '月增率'],
     depth: 'detailed',
@@ -354,38 +354,11 @@ const EXTRACT_SYSTEM = `你是需求解析工具。從使用者的需求文字�
 - 全部列完，不可用省略號
 
 輸出範例（格式示範）：
-{"requestedMetrics": ["簽帳金額市占率", "流通卡數市占率", "有效卡率", "簽帳金額月增率", "單卡平均消費力"]}`;
+{"requestedMetrics": ["指標A市占率", "指標B成長率", "效率比率"]}`;
 
-const AVAILABLE_COLUMNS = `可用 Excel 欄位（每月一份檔案，114年1月至12月）：
-- 金融機構名稱（約 34 家銀行，另有「總計」列）
-- 流通卡數（張）
-- 有效卡數（張）
-- 當月發卡數（張）
-- 當月停卡數（張）
-- 循環信用餘額（千元）
-- 未到期分期付款餘額（千元）
-- 當月簽帳金額（千元）
-- 當月預借現金金額（千元）
-- 逾期三個月以上帳款占應收帳款餘額比率（%）
-- 逾期六個月以上帳款占應收帳款餘額比率（%）
-- 備抵呆帳提足率（%）
-- 當月轉銷呆帳金額（千元）
-- 當年度轉銷呆帳金額累計至資料月份（千元）
 
-可用的計算方式：
-- 市占率 = 個別銀行數值 ÷ 總計數值 × 100%
-- 月增率(MoM) = (本月 − 上月) ÷ 上月 × 100%
-- 排名 = 依數值大小排序
-- 有效卡率 = 有效卡數 ÷ 流通卡數 × 100%
-- 停卡率 = 當月停卡數 ÷ 流通卡數 × 100%
-- 單卡平均消費力 = 當月簽帳金額 ÷ 有效卡數
-- 循環信用使用率 = 循環信用餘額 ÷ 當月簽帳金額 × 100%
-- 比率類欄位可直接引用
-- 年增率(YoY) 無法計算，因為沒有 113 年度資料`;
-
-const MAP_SYSTEM = `你是金融數據分析專家。使用者列出的每一個指標，你都必須逐項回答能不能算，一項都不能跳過。
-
-${AVAILABLE_COLUMNS}
+const MAP_SYSTEM = `你是數據分析專家。使用者列出的每一個指標，你都必須逐項回答能不能算，一項都不能跳過。
+你需要根據使用者提供的資料欄位來判斷，不要假設任何固定欄位結構。
 
 能算的放進 metrics，並寫出確切公式與對報告對象的意義。
 不能算的放進 unsupported，並說明缺少什麼資料。
@@ -395,8 +368,8 @@ ${AVAILABLE_COLUMNS}
   "metrics": [
     {
       "id": "m1",
-      "name": "簽帳金額市占率",
-      "definition": "個別銀行當月簽帳金額 ÷ 總計當月簽帳金額 × 100%",
+      "name": "市占率",
+      "definition": "個別實體數值 ÷ 總計數值 × 100%",
       "category": "市占率",
       "supported": true,
       "relevanceToAudience": "直接反映在消費市場的競爭地位，是主管最關注的排名依據"
@@ -493,7 +466,7 @@ const INSIGHTS_SYSTEM = `你是策略顧問，負責從數據中找出有決策�
 - topic：主題名稱，對應一個分析面向
 - keyFinding：核心發現。像新聞標題一樣具體，必須含數字
 - dataPoints：2 到 4 個支撐數據，每一筆都要標明銀行、期間、數值，且必須出自提供的數據
-- implication：這件事對台新的意義（So What）
+- implication：這件事對重點實體的意義（So What）
 - recommendation：具體可執行的建議（Now What），要能指出做什麼、對誰做
 - chartSuggestion：line／bar／kpi／comparison／table 之一
 
@@ -508,15 +481,15 @@ const INSIGHTS_SYSTEM = `你是策略顧問，負責從數據中找出有決策�
 {
   "insights": [
     {
-      "topic": "簽帳金額市占率競爭態勢",
-      "keyFinding": "前二大銀行合計市占 36.55%，台新以 10.67% 位居第五，與第四名玉山僅差 1.30 個百分點",
+      "topic": "市占率競爭態勢",
+      "keyFinding": "前二大銀行合計市占 36.55%，重點實體以 10.67% 位居第五，與上一名僅差 1.30 個百分點",
       "dataPoints": [
-        "中國信託 11412 簽帳金額市占率 18.50%，排名第 1",
-        "玉山銀行 11412 簽帳金額市占率 11.97%，排名第 4",
-        "台新銀行 11412 簽帳金額市占率 10.67%，排名第 5"
+        "第一名 11412 市占率 18.50%，排名第 1",
+        "第四名 指標A 11.97%",
+        "重點實體 11412 市占率 10.67%，排名第 5"
       ],
-      "implication": "台新與第四名差距不到 1.5 個百分點，屬於可在一年內翻轉的距離，但同時也面臨被第六名追上的風險",
-      "recommendation": "鎖定玉山重疊客群的高頻消費場景，優先在餐飲與網購通道加碼回饋，目標一年內將市占推升至 12%",
+      "implication": "重點實體與第四名差距不到 1.5 個百分點，屬於可在一年內翻轉的距離，但同時也面臨被第六名追上的風險",
+      "recommendation": "鎖定競爭者重疊客群的高頻消費場景，優先在餐飲與網購通道加碼回饋，目標一年內將市占推升至 12%",
       "chartSuggestion": "bar"
     }
   ]
@@ -608,11 +581,11 @@ const OUTLINE_SYSTEM = `你是簡報架構設計師。先規劃整份簡報的�
 
 輸出範例（格式示範，內容依實際分析結果重新規劃）：
 {
-  "narrative": "台新與第四名差距縮小至 1.3 個百分點，明年是搶進前四的窗口",
+  "narrative": "重點實體與第四名差距縮小至 1.3 個百分點，明年是搶進前四的窗口",
   "sections": [
     { "title": "開場", "purpose": "兩頁內讓主管掌握全局與主要結論", "contentPages": 1, "insightTopics": [] },
-    { "title": "市場定位", "purpose": "用市占與排名確立台新目前的競爭位置", "contentPages": 3, "insightTopics": ["簽帳金額市占率競爭態勢"] },
-    { "title": "成長動能", "purpose": "拆解月增率與消費力的成長來源", "contentPages": 2, "insightTopics": ["簽帳金額月增率表現"] },
+    { "title": "市場定位", "purpose": "用市占與排名確立重點實體的競爭位置", "contentPages": 3, "insightTopics": ["市占率競爭態勢"] },
+    { "title": "成長動能", "purpose": "拆解月增率與消費力的成長來源", "contentPages": 2, "insightTopics": ["月增率表現"] },
     { "title": "結論與建議", "purpose": "收斂成可執行的優先行動", "contentPages": 2, "insightTopics": [] },
     { "title": "結語", "purpose": "結束", "contentPages": 0, "insightTopics": [] }
   ]
@@ -649,18 +622,18 @@ heading、chart、kpi_block、comparison、table、insight、text_block、bullet
     {
       "pageTitle": "與第四名差距縮小至 1.30 個百分點",
       "layout": "content",
-      "message": "台新 10.67% 對玉山 11.97%，差距是三年來最小",
+      "message": "重點實體 10.67% 對第四名 11.97%，差距是三年來最小",
       "elements": ["heading", "chart", "kpi_block", "insight", "source"],
       "metricIds": ["m1"],
-      "insightTopics": ["簽帳金額市占率競爭態勢"]
+      "insightTopics": ["市占率競爭態勢"]
     },
     {
       "pageTitle": "前五大銀行合計掌握七成市場",
       "layout": "content",
-      "message": "中信與國泰合計 36.55%，市場集中度持續升高",
+      "message": "前二名合計 36.55%，市場集中度持續升高",
       "elements": ["heading", "comparison", "text_block", "source"],
       "metricIds": ["m1"],
-      "insightTopics": ["簽帳金額市占率競爭態勢"]
+      "insightTopics": ["市占率競爭態勢"]
     }
   ]
 }`;
@@ -856,7 +829,7 @@ ${prompt}
         pages: [{
           pageTitle: '謝謝',
           layout: 'backcover',
-          message: '台新新光金控',
+          message: '智匯數據簡報神器',
           elements: ['title', 'subtitle'],
         }],
       });
@@ -1032,7 +1005,7 @@ function buildFallbackArchitecture(
       {
         pageTitle: '謝謝',
         layout: 'backcover',
-        message: '台新新光金控',
+        message: '智匯數據簡報神器',
         elements: ['title', 'subtitle'],
       },
     ],
@@ -1071,10 +1044,10 @@ const COMPLIANCE_SYSTEM = `你是品質審核員。比對使用者的原始需�
   ],
   "corrections": {
     "additionalMetrics": [
-      {"name":"停卡率","definition":"當月停卡數 ÷ 流通卡數 × 100%","category":"效率","relevanceToAudience":"反映客戶流失情況"}
+      {"name":"停卡率","definition":"A欄位 ÷ B欄位 × 100%","category":"效率","relevanceToAudience":"反映客戶流失情況"}
     ],
     "additionalInsights": [
-      {"topic":"競爭者比較","keyFinding":"中信與國泰合計市占36.55%，遠超台新10.67%","dataPoints":["中信18.50%","國泰18.05%","台新10.67%"],"implication":"雙強格局穩固，台新需差異化突圍","recommendation":"避免正面價格戰，聚焦特定消費場景","chartSuggestion":"comparison"}
+      {"topic":"競爭者比較","keyFinding":"前二名合計市占36.55%，遠超重點實體10.67%","dataPoints":["第一名18.50%","第二名18.05%","重點實體10.67%"],"implication":"市場集中度高，重點實體需差異化突圍","recommendation":"避免正面價格戰，聚焦特定消費場景","chartSuggestion":"comparison"}
     ]
   }
 }
