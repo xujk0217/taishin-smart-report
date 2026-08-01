@@ -191,7 +191,7 @@ export function PlanStage({ plan: initialPlan, onApprove, onBack }: Props) {
             className="input"
             value={chatInput}
             onChange={e => setChatInput(e.target.value)}
-            placeholder="告訴 AI 你想怎麼調整，例如「加一頁競爭者比較」「移除月增率」..."
+            placeholder="告訴 AI 你想怎麼調整，例如「多加一頁比較圖表」「刪掉第三頁」..."
             {...chatEnter}
             disabled={isAdjusting}
           />

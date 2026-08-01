@@ -2,12 +2,13 @@ import React, { useState, useRef } from 'react';
 import { VoiceButton } from './VoiceButton';
 
 interface Props {
-  onComplete: (files: File[], prompt: string) => void;
+  onComplete: (files: File[], prompt: string, template?: File) => void;
 }
 
 export function UploadStage({ onComplete }: Props) {
   const [files, setFiles] = useState<File[]>([]);
-  const [prompt, setPrompt] = useState('分析台新信用卡 114 年 1-12 月市占率與排名趨勢，並產生管理報告簡報');
+  const [template, setTemplate] = useState<File | null>(null);
+  const [prompt, setPrompt] = useState('');
   const [dragActive, setDragActive] = useState(false);
   const [error, setError] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -27,12 +28,12 @@ export function UploadStage({ onComplete }: Props) {
 
   const handleSubmit = () => {
     if (files.length === 0 || !prompt.trim()) return;
-    onComplete(files, prompt);
+    onComplete(files, prompt, template ?? undefined);
   };
 
   return (
     <div className="card">
-      <h2>📊 上傳 Excel 並輸入分析需求</h2>
+      <h2>📊 上傳報表並輸入分析需求</h2>
 
       {/* File upload */}
       <div
@@ -51,16 +52,16 @@ export function UploadStage({ onComplete }: Props) {
         />
         <div style={{ fontSize: '2.5rem', marginBottom: '0.8rem' }}>📁</div>
         <div style={{ fontSize: '1rem', fontWeight: 500 }}>
-          {files.length > 0 ? `已選擇 ${files.length} 個檔案` : '拖曳 Excel 檔案到此，或點擊上傳'}
+          {files.length > 0 ? `已選擇 ${files.length} 個檔案` : '拖曳報表檔案到此，或點擊上傳'}
         </div>
         <div style={{ color: 'var(--text-muted)', marginTop: '0.4rem', fontSize: '0.85rem' }}>
-          支援 .xlsx、.csv、.pdf 格式
+          支援 .xlsx、.csv、.pdf 格式，可同時上傳多張報表
         </div>
       </div>
 
       {/* Error message */}
       {error && (
-        <div style={{ margin: '1rem 0', padding: '0.8rem', background: '#FFEBEE', borderRadius: '8px', color: '#D32F2F', fontSize: '0.9rem' }}>
+        <div style={{ margin: '1rem 0', padding: '0.8rem', background: '#FEF2F2', borderRadius: '8px', color: '#DC2626', fontSize: '0.9rem' }}>
           ⚠️ {error}
         </div>
       )}
@@ -80,10 +81,40 @@ export function UploadStage({ onComplete }: Props) {
         </div>
       )}
 
+      {/* Template upload (optional) */}
+      <div style={{ marginTop: '1.2rem' }}>
+        <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, fontSize: '0.9rem' }}>
+          🎨 PPT 模板（選填，上傳你的品牌模板 .pptx）
+        </label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
+          <input
+            type="file"
+            accept=".pptx"
+            onChange={e => {
+              const f = e.target.files?.[0];
+              if (f && f.name.endsWith('.pptx')) setTemplate(f);
+            }}
+            style={{ fontSize: '0.85rem' }}
+          />
+          {template && (
+            <span className="badge badge-success" style={{ fontSize: '0.8rem', padding: '0.3rem 0.6rem' }}>
+              📄 {template.name} ({(template.size / 1024).toFixed(0)} KB)
+              <button
+                onClick={() => setTemplate(null)}
+                style={{ marginLeft: '0.4rem', background: 'none', border: 'none', cursor: 'pointer' }}
+              >×</button>
+            </span>
+          )}
+        </div>
+        <div style={{ marginTop: '0.3rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+          系統會在你的模板頁面上疊加數據、圖表和分析。不上傳則使用預設版面。
+        </div>
+      </div>
+
       {/* Prompt */}
       <div style={{ marginTop: '1.5rem' }}>
         <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, fontSize: '0.9rem' }}>
-          📝 分析需求（告訴 AI 你想要什麼）
+          📝 分析需求（告訴 AI 你想要什麼樣的簡報）
         </label>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
           <textarea
@@ -91,12 +122,12 @@ export function UploadStage({ onComplete }: Props) {
             style={{ flex: 1 }}
             value={prompt}
             onChange={e => setPrompt(e.target.value)}
-            placeholder="例如：分析台新信用卡 114 年市占率趨勢，比較前五大銀行表現，並產生管理報告..."
+            placeholder="例如：分析這份報表的關鍵趨勢，比較各項目表現，產生給主管的分析簡報..."
           />
           <VoiceButton onResult={text => setPrompt(prev => prev + text)} />
         </div>
         <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-          AI 會根據你的需求分析 Excel 資料，自動決定計算方式與簡報架構。支援語音輸入 🎤
+          AI 會自動辨識報表間的關聯與欄位對應，計算指標並生成專業簡報。支援語音輸入 🎤
         </div>
       </div>
 

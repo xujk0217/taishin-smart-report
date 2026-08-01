@@ -1,20 +1,20 @@
 :root {
-  --primary: #C01B2B;
-  --primary-dark: #8B0000;
-  --primary-light: #E85050;
+  --primary: #3B82F6;
+  --primary-dark: #1D4ED8;
+  --primary-light: #60A5FA;
   --secondary: #FFFFFF;
-  --accent: #F0F0F0;
-  --accent-dark: #E0E0E0;
-  --text: #222222;
-  --text-light: #555555;
-  --text-muted: #888888;
-  --bg: #FAFAFA;
+  --accent: #F3F4F6;
+  --accent-dark: #E5E7EB;
+  --text: #1F2937;
+  --text-light: #4B5563;
+  --text-muted: #9CA3AF;
+  --bg: #F9FAFB;
   --card-bg: #FFFFFF;
-  --success: #2E7D32;
-  --warning: #F57C00;
-  --error: #D32F2F;
-  --info: #1565C0;
-  --border: #E8E8E8;
+  --success: #059669;
+  --warning: #D97706;
+  --error: #DC2626;
+  --info: #2563EB;
+  --border: #E5E7EB;
   --shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
   --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.1);
   --radius: 12px;
@@ -42,7 +42,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  box-shadow: 0 2px 8px rgba(192, 27, 43, 0.2);
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.2);
   position: sticky;
   top: 0;
   z-index: 100;
@@ -93,7 +93,7 @@ body {
   background: var(--primary);
   color: white;
 }
-.btn-primary:hover { background: var(--primary-dark); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(192, 27, 43, 0.3); }
+.btn-primary:hover { background: var(--primary-dark); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3); }
 .btn-primary:disabled { background: #ccc; cursor: not-allowed; transform: none; box-shadow: none; }
 
 .btn-secondary {
@@ -108,7 +108,7 @@ body {
   color: var(--primary);
   border: 1px solid var(--primary);
 }
-.btn-outline:hover { background: rgba(192, 27, 43, 0.05); }
+.btn-outline:hover { background: rgba(59, 130, 246, 0.05); }
 
 .btn-sm { padding: 0.4rem 0.8rem; font-size: 0.8rem; }
 .btn-lg { padding: 0.9rem 2rem; font-size: 1rem; }
@@ -123,7 +123,7 @@ body {
   transition: var(--transition);
   position: relative;
 }
-.upload-zone:hover, .upload-zone.active { border-color: var(--primary); background: rgba(192, 27, 43, 0.02); }
+.upload-zone:hover, .upload-zone.active { border-color: var(--primary); background: rgba(59, 130, 246, 0.02); }
 .upload-zone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 
 /* Form */
@@ -138,7 +138,7 @@ body {
   min-height: 80px;
   transition: border-color 0.2s;
 }
-.textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(192, 27, 43, 0.1); }
+.textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1); }
 
 .input {
   width: 100%;
@@ -149,7 +149,7 @@ body {
   font-family: inherit;
   transition: border-color 0.2s;
 }
-.input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(192, 27, 43, 0.1); }
+.input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1); }
 
 /* Progress */
 .progress-bar { height: 3px; background: var(--accent); border-radius: 2px; overflow: hidden; }
@@ -193,7 +193,7 @@ body {
   gap: 0.8rem;
 }
 .plan-item.supported { border-left: 3px solid var(--success); }
-.plan-item.unsupported { border-left: 3px solid var(--warning); background: #FFF8E1; }
+.plan-item.unsupported { border-left: 3px solid var(--warning); background: #FFFBEB; }
 
 /* Preview */
 .preview-layout {
@@ -226,7 +226,7 @@ body {
 .slide-thumb:hover { border-color: var(--primary-light); }
 .slide-thumb.active {
   border-color: var(--primary);
-  box-shadow: 0 0 0 2px rgba(192, 27, 43, 0.18);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18);
 }
 
 .slide-main {
@@ -296,10 +296,10 @@ body {
   font-size: 0.7rem;
   font-weight: 500;
 }
-.badge-success { background: #E8F5E9; color: var(--success); }
-.badge-warning { background: #FFF3E0; color: var(--warning); }
-.badge-error { background: #FFEBEE; color: var(--error); }
-.badge-info { background: #E3F2FD; color: var(--info); }
+.badge-success { background: #ECFDF5; color: var(--success); }
+.badge-warning { background: #FFFBEB; color: var(--warning); }
+.badge-error { background: #FEF2F2; color: var(--error); }
+.badge-info { background: #EFF6FF; color: var(--info); }
 
 /* Loading spinner */
 .spinner {
@@ -324,6 +324,6 @@ body {
 
 /* Voice input mic pulse */
 @keyframes pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(192, 27, 43, 0.4); }
-  50% { box-shadow: 0 0 0 8px rgba(192, 27, 43, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(59, 130, 246, 0); }
 }

@@ -1,7 +1,7 @@
 /**
  * Browser-side PPTX generation from a SlideSpec deck.
  *
- * Each slide gets the official Taishin template JPEG as its full-page
+ * Each slide gets the template background JPEG as its full-page
  * background, then elements are laid out on top. Charts are emitted as
  * native PowerPoint chart objects so users can hit "Edit Data".
  */
@@ -13,12 +13,12 @@ import { resolveChart, traceElement } from './provenance';
 
 // ─── Brand tokens ────────────────────────────────────────────
 const BRAND = {
-  primary: 'C0392B',
-  primaryDark: '922B21',
+  primary: '3B82F6',
+  primaryDark: '1D4ED8',
   white: 'FFFFFF',
-  text: '2C3E50',
-  textLight: '7F8C8D',
-  chartColors: ['C0392B', '2980B9', '27AE60', 'F39C12', '8E44AD', '16A085'],
+  text: '1F2937',
+  textLight: '6B7280',
+  chartColors: ['3B82F6', '10B981', 'F59E0B', 'EF4444', '8B5CF6', '06B6D4'],
   font: '微軟正黑體',
 };
 
@@ -29,9 +29,16 @@ const MARGIN = 0.6;
 const CONTENT_W = SLIDE_W - MARGIN * 2;
 
 const BG_FILES: Record<BackgroundTemplate, string> = {
-  '001': '/template-slides/slide-cover.jpg',
-  '002': '/template-slides/slide-content.jpg',
-  '003': '/template-slides/slide-backcover.jpg',
+  '001': '',  // No template image — use solid color
+  '002': '',  // No template image — use solid color
+  '003': '',  // No template image — use solid color
+};
+
+// Background colors for each template type (used when no image is available)
+const BG_COLORS: Record<BackgroundTemplate, string> = {
+  '001': 'EFF6FF',  // Light blue for cover/section title
+  '002': 'FFFFFF',  // White for content
+  '003': '1E3A5F',  // Dark blue for back cover
 };
 
 /** Vertical cursor used while stacking elements down a content slide. */
@@ -78,10 +85,10 @@ export async function exportPptx(
   pptx.subject = '數據分析報告';
   pptx.title = findTitle(slides) ?? '數據分析報告';
 
-  // Preload the three backgrounds once instead of per slide.
+  // Preload backgrounds — use images if available, otherwise fall back to solid colors
   const backgrounds: Partial<Record<BackgroundTemplate, string | null>> = {};
   for (const bg of ['001', '002', '003'] as BackgroundTemplate[]) {
-    backgrounds[bg] = await loadBackground(bg);
+    backgrounds[bg] = BG_FILES[bg] ? await loadBackground(bg) : null;
   }
 
   for (const spec of slides) {
@@ -93,10 +100,10 @@ export async function exportPptx(
         slide.addImage({ data: bgData, x: 0, y: 0, w: SLIDE_W, h: SLIDE_H });
       } catch {
         // If image fails, use solid color fallback
-        slide.background = { color: spec.background === '002' ? BRAND.white : 'F8E8E8' };
+        slide.background = { color: BG_COLORS[spec.background] ?? BRAND.white };
       }
     } else {
-      slide.background = { color: spec.background === '002' ? BRAND.white : 'F8E8E8' };
+      slide.background = { color: BG_COLORS[spec.background] ?? BRAND.white };
     }
 
     const onDark = spec.background !== '002';

@@ -1,11 +1,10 @@
 /**
- * Constrained natural-language slide editing.
+ * Natural-language slide editing with minimal guardrails.
  *
- * The AI is allowed to rephrase titles, reorder bullets, tighten wording and
- * switch layout hints. It is NOT allowed to change any quantitative value,
- * ranking, or period, nor to drop a source annotation. Rather than trusting
- * the model to behave, every proposed edit is diffed against the original and
- * rejected if it touches protected content.
+ * AI has full freedom to restructure slides (add/remove/reorder elements,
+ * change types, rewrite text). The only protection is: computed data values
+ * (numbers in kpi_block, comparison, table) and chart dataKey bindings
+ * must be preserved to maintain data integrity.
  */
 import { callGroqWithRetry, extractContent } from './groq-retry';
 import type { SlideSpec, SlideElement } from '../types/slide-spec';
@@ -20,59 +19,33 @@ export interface EditViolation {
 
 export interface EditResult {
   ok: boolean;
-  /** Present when ok; the edited slide. */
   slide?: SlideSpec;
-  /** Why the edit was refused, or warnings about what was ignored. */
   violations: EditViolation[];
-  /** Short description of what actually changed. */
   changes: string[];
 }
 
 const SYSTEM_PROMPT = `你是簡報編輯助理，負責依指示修改單一投影片的 JSON 規格。
 
-嚴格規則（違反會被系統擋下）：
-1. 絕對不可更改任何數字：value、rank、metrics 的數值、entities 的數值、表格中的數字都必須逐字保留
-2. 不可刪除 type 為 "chart"、"kpi_block"、"comparison"、"table"、"source" 的元素
-3. 不可更改 chart 元素的 dataKey 或 chartType
-4. 不可更改任何元素的 type
-5. elements 陣列的長度必須保持不變
+核心規則（保護數據正確性）：
+1. 不可更改任何來自計算的數字（如 kpi_block 的 value、comparison 的 value、table 中的數字）
+2. 不可更改 chart 的 dataKey（這關聯到實際計算資料）
 
-你可以做的：
-- 改寫 title、subtitle、heading、text_block、insight 的文字敘述
-- 改寫或重新排序 bullet_list 的 items 文字
-- 修正錯字、調整語氣、讓敘述更精簡或更專業
+你可以做的（AI 完全自由）：
+- 改寫任何文字內容（標題、段落、洞察、列表）
+- 新增或刪除元素（例如加一個 insight、刪一個 bullet_list）
+- 改變元素順序
+- 改變元素的 type（例如把 text_block 改成 bullet_list）
 - 修改 section 名稱
+- 調整 size 欄位
+- 改變 chart 的 chartType（例如 bar → pie）
 
 只回傳修改後的完整 JSON 物件，不要有其他文字或 markdown 標記。`;
 
-/** Pulls every number out of a value, used to prove numbers were preserved. */
-function extractNumbers(value: unknown): number[] {
-  const out: number[] = [];
-  const walk = (v: unknown) => {
-    if (typeof v === 'number') {
-      out.push(v);
-    } else if (typeof v === 'string') {
-      const found = v.match(/-?\d+(?:\.\d+)?/g);
-      if (found) out.push(...found.map(Number));
-    } else if (Array.isArray(v)) {
-      v.forEach(walk);
-    } else if (v && typeof v === 'object') {
-      Object.values(v).forEach(walk);
-    }
-  };
-  walk(value);
-  return out.sort((a, b) => a - b);
-}
-
-function sameNumbers(a: number[], b: number[]): boolean {
-  if (a.length !== b.length) return false;
-  return a.every((n, i) => Math.abs(n - b[i]) < 1e-9);
-}
-
-const PROTECTED_TYPES = new Set(['chart', 'kpi_block', 'comparison', 'table', 'source']);
+// ─── Validation ──────────────────────────────────────────────
 
 /**
- * Validates a proposed slide against the original, returning any violations.
+ * Only protects: computed numeric values and chart dataKey bindings.
+ * AI is free to restructure everything else.
  */
 export function validateEdit(original: SlideSpec, proposed: unknown): EditViolation[] {
   const v: EditViolation[] = [];
@@ -85,87 +58,84 @@ export function validateEdit(original: SlideSpec, proposed: unknown): EditViolat
     return [{ code: 'INVALID_SHAPE', message: 'AI 回傳的內容缺少 elements 陣列' }];
   }
 
-  if (cand.elements.length !== original.elements.length) {
-    v.push({
-      code: 'DATA_ELEMENT_REMOVED',
-      message: `元素數量從 ${original.elements.length} 變成 ${cand.elements.length}，不允許增減元素`,
-    });
-    return v;
+  // Check that key data numbers weren't altered
+  const originalNums = extractDataNumbers(original.elements);
+  const proposedNums = extractDataNumbers(cand.elements as SlideElement[]);
+
+  for (const num of originalNums) {
+    if (!proposedNums.some(n => Math.abs(n - num) < 0.005)) {
+      v.push({
+        code: 'NUMBER_CHANGED',
+        message: `原始數據中的 ${num} 在修改後消失了`,
+      });
+    }
   }
 
-  for (let i = 0; i < original.elements.length; i++) {
-    const before = original.elements[i];
-    const after = cand.elements[i] as SlideElement;
-    const label = `第 ${i + 1} 個元素（${before.type}）`;
-
-    if (before.type !== after?.type) {
+  // Check chart dataKey preservation
+  const originalCharts = original.elements.filter(e => e.type === 'chart');
+  const proposedCharts = (cand.elements as SlideElement[]).filter(e => e.type === 'chart');
+  for (const oc of originalCharts) {
+    if (oc.dataKey && !proposedCharts.some(pc => pc.dataKey === oc.dataKey)) {
       v.push({
-        code: 'ELEMENT_TYPE_CHANGED',
-        message: `${label} 的類型被改成 ${after?.type ?? '未知'}`,
+        code: 'CHART_REBOUND',
+        message: `圖表 dataKey "${oc.dataKey}" 被移除或更改，可能導致資料斷連`,
       });
-      continue;
-    }
-
-    // Numbers must survive untouched everywhere they carry meaning.
-    if (PROTECTED_TYPES.has(before.type) || before.type === 'text_block'
-        || before.type === 'insight' || before.type === 'bullet_list'
-        || before.type === 'heading' || before.type === 'title'
-        || before.type === 'subtitle') {
-      const nBefore = extractNumbers(stripNarrative(before));
-      const nAfter = extractNumbers(stripNarrative(after));
-      if (!sameNumbers(nBefore, nAfter)) {
-        v.push({
-          code: 'NUMBER_CHANGED',
-          message: `${label} 的數值被改動（原本 ${nBefore.join('、') || '無'} → 變成 ${nAfter.join('、') || '無'}）`,
-        });
-      }
-    }
-
-    if (before.type === 'chart') {
-      if (before.dataKey !== after.dataKey) {
-        v.push({ code: 'CHART_REBOUND', message: `${label} 的資料來源 dataKey 被更改` });
-      }
-      if (before.chartType !== after.chartType) {
-        v.push({ code: 'CHART_REBOUND', message: `${label} 的圖表類型被更改` });
-      }
-    }
-
-    if (before.type === 'kpi_block') {
-      const rb = (before.metrics ?? []).map(m => m.rank ?? null);
-      const ra = (after.metrics ?? []).map(m => m.rank ?? null);
-      if (JSON.stringify(rb) !== JSON.stringify(ra)) {
-        v.push({ code: 'RANK_CHANGED', message: `${label} 的排名被更改` });
-      }
-    }
-
-    if (before.type === 'source' && !after.content?.trim()) {
-      v.push({ code: 'SOURCE_REMOVED', message: `${label} 的來源標註被清空` });
     }
   }
 
   return v;
 }
 
-/** For narrative types, numbers live in the text; for data types, in the fields. */
-function stripNarrative(el: SlideElement): unknown {
-  if (el.type === 'bullet_list') return el.items ?? [];
-  if (el.type === 'kpi_block') return el.metrics ?? [];
-  if (el.type === 'comparison') return el.entities ?? [];
-  if (el.type === 'table') return el.rows ?? [];
-  if (el.type === 'chart') return [];
-  return el.content ?? '';
+/** Extract numbers from data-carrying elements only. */
+function extractDataNumbers(elements: SlideElement[]): number[] {
+  const nums: number[] = [];
+  for (const el of elements) {
+    if (el.type === 'kpi_block' && el.metrics) {
+      for (const m of el.metrics) {
+        const found = m.value.match(/-?\d+(?:\.\d+)?/g);
+        if (found) nums.push(...found.map(Number));
+      }
+    }
+    if (el.type === 'comparison' && el.entities) {
+      for (const e of el.entities) {
+        const found = e.value.match(/-?\d+(?:\.\d+)?/g);
+        if (found) nums.push(...found.map(Number));
+      }
+    }
+    if (el.type === 'table' && el.rows) {
+      for (const row of el.rows) {
+        for (const cell of row) {
+          const found = cell.match(/-?\d+(?:\.\d+)?/g);
+          if (found) nums.push(...found.map(Number));
+        }
+      }
+    }
+  }
+  return nums;
 }
 
-/** Human-readable diff of what the edit actually altered. */
+// ─── Helpers ─────────────────────────────────────────────────
+
+function truncate(s?: string, n = 24): string {
+  if (!s) return '';
+  return s.length > n ? `${s.slice(0, n)}…` : s;
+}
+
 function describeChanges(original: SlideSpec, edited: SlideSpec): string[] {
   const out: string[] = [];
   if (original.section !== edited.section) {
     out.push(`段落名稱：${original.section ?? '無'} → ${edited.section ?? '無'}`);
   }
-  for (let i = 0; i < original.elements.length; i++) {
+  if (original.elements.length !== edited.elements.length) {
+    out.push(`元素數量：${original.elements.length} → ${edited.elements.length}`);
+  }
+  const minLen = Math.min(original.elements.length, edited.elements.length);
+  for (let i = 0; i < minLen; i++) {
     const a = original.elements[i];
     const b = edited.elements[i];
-    if (a.type === 'bullet_list') {
+    if (a.type !== b.type) {
+      out.push(`元素 ${i + 1}：${a.type} → ${b.type}`);
+    } else if (a.type === 'bullet_list') {
       const ja = JSON.stringify(a.items ?? []);
       const jb = JSON.stringify(b.items ?? []);
       if (ja !== jb) out.push(`要點列表已改寫（${(b.items ?? []).length} 條）`);
@@ -174,11 +144,6 @@ function describeChanges(original: SlideSpec, edited: SlideSpec): string[] {
     }
   }
   return out;
-}
-
-function truncate(s?: string, n = 24): string {
-  if (!s) return '';
-  return s.length > n ? `${s.slice(0, n)}…` : s;
 }
 
 function parseJson(text: string): unknown {
@@ -196,9 +161,11 @@ function parseJson(text: string): unknown {
   }
 }
 
+// ─── Main edit function ──────────────────────────────────────
+
 /**
  * Applies a natural-language instruction to one slide.
- * Returns the edited slide only if it passes every guardrail.
+ * AI has full freedom to restructure; only data values are protected.
  */
 export async function editSlide(
   slide: SlideSpec,
@@ -207,7 +174,7 @@ export async function editSlide(
   if (!GROQ_KEY) {
     return {
       ok: false,
-      violations: [{ code: 'INVALID_SHAPE', message: '尚未設定 AI 金鑰（VITE_OPENCODE_KEY 或 VITE_GROQ_KEY），無法執行語意編輯' }],
+      violations: [{ code: 'INVALID_SHAPE', message: '尚未設定 AI 金鑰，無法執行編輯' }],
       changes: [],
     };
   }
@@ -232,7 +199,7 @@ export async function editSlide(
         { role: 'user', content: userMsg },
       ],
       temperature: 0.25,
-      max_tokens: 2000,
+      max_tokens: 4000,
     });
     raw = extractContent(await Promise.race([call, timeout]));
   } catch (err: any) {
@@ -249,22 +216,12 @@ export async function editSlide(
     return { ok: false, violations, changes: [] };
   }
 
-  // Rebuild from the original so protected fields can never drift, taking only
-  // the narrative fields from the AI response.
+  // AI has freedom to restructure — use its output directly
   const cand = parsed as SlideSpec;
   const merged: SlideSpec = {
     ...slide,
     section: cand.section ?? slide.section,
-    elements: slide.elements.map((before, i) => {
-      const after = cand.elements[i];
-      const next: SlideElement = { ...before };
-      if (before.type === 'bullet_list') {
-        if (Array.isArray(after.items)) next.items = after.items;
-      } else if (!PROTECTED_TYPES.has(before.type) || before.type === 'source') {
-        if (typeof after.content === 'string') next.content = after.content;
-      }
-      return next;
-    }),
+    elements: cand.elements ?? slide.elements,
   };
 
   return { ok: true, slide: merged, violations: [], changes: describeChanges(slide, merged) };

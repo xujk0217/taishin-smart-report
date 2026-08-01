@@ -15,11 +15,11 @@ const SYSTEM = `你是分析計劃調整助理。使用者會告訴你想怎麼�
 輸出範例（格式示範）：
 {
   "formulas": [
-    { "id": "f1", "name": "簽帳金額市占率", "definition": "個別銀行簽帳金額 ÷ 總計 × 100%", "supported": true },
-    { "id": "f2", "name": "流通卡數市占率", "definition": "個別銀行流通卡數 ÷ 總計 × 100%", "supported": true }
+    { "id": "f1", "name": "指標A分析", "definition": "依據資料欄位 ÷ 合計 × 100%", "supported": true },
+    { "id": "f2", "name": "期間變化率", "definition": "(本期 - 上期) ÷ 上期 × 100%", "supported": true }
   ],
-  "suggestedSlides": ["封面", "目錄", "市占率趨勢", "排名比較", "結論與建議", "封底"],
-  "explanation": "已新增流通卡數比較頁，並將月增率分析移到結論之前"
+  "suggestedSlides": ["封面", "目錄", "趨勢分析", "比較分析", "結論與建議", "封底"],
+  "explanation": "已新增比較分析頁，並調整頁面順序"
 }
 
 規則：

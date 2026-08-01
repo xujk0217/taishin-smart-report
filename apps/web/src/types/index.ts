@@ -1,11 +1,11 @@
 export type AppStage =
-  | 'upload'        // 使用者上傳 Excel + 輸入 prompt
-  | 'analyzing'     // AI 分析 prompt，決定要做什麼
-  | 'plan'          // 顯示計劃給使用者確認
-  | 'processing'    // 執行計算、AI 洞察
-  | 'preview'       // 預覽簡報 + 編輯
-  | 'exporting'     // 輸出最終 PPTX
-  | 'sending';      // 模擬寄送
+  | 'upload'        // 使用者上傳報表 + 輸入需求（文字/語音）
+  | 'analyzing'     // AI 解析報表結構，辨識關聯與指標
+  | 'plan'          // 顯示分析計劃給使用者確認
+  | 'processing'    // 確定性計算 + AI 簡報生成
+  | 'preview'       // 預覽簡報 + 自然語言編輯
+  | 'exporting'     // 輸出 PPTX + 對應 Excel
+  | 'sending';      // 自動寄送至收件人
 
 export interface FormulaPlanItem {
   id: string;

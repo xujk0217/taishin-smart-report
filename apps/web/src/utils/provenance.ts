@@ -34,19 +34,24 @@ export function resolveChart(
 
   const key = dataKey.toLowerCase();
   const byTitle = (pred: (t: string) => boolean) =>
-    result.charts.find(c => pred(c.title));
+    result.charts.find(c => pred(c.title.toLowerCase()));
 
-  if (key.includes('rank')) {
+  // Try exact chartId match first
+  const byId = result.charts.find(c => c.chartId === dataKey);
+  if (byId) return byId;
+
+  // Fuzzy keyword matching for AI-generated dataKeys
+  if (key.includes('rank') || key.includes('排名')) {
     return byTitle(t => t.includes('排名')) ?? result.charts[result.charts.length - 1];
   }
-  if (key.includes('mom') || key.includes('month')) {
-    return byTitle(t => t.includes('月增')) ?? result.charts[Math.min(1, result.charts.length - 1)];
+  if (key.includes('growth') || key.includes('mom') || key.includes('成長') || key.includes('變化')) {
+    return byTitle(t => t.includes('成長') || t.includes('變化')) ?? result.charts[Math.min(1, result.charts.length - 1)];
   }
-  if (key.includes('card') || key.includes('流通')) {
-    return byTitle(t => t.includes('流通') || t.includes('卡')) ?? result.charts[0];
+  if (key.includes('pie') || key.includes('組成') || key.includes('分布')) {
+    return byTitle(t => t.includes('組成') || t.includes('分布')) ?? result.charts[0];
   }
-  if (key.includes('share') || key.includes('trend') || key.includes('市占')) {
-    return byTitle(t => t.includes('市占')) ?? result.charts[0];
+  if (key.includes('share') || key.includes('trend') || key.includes('趨勢') || key.includes('佔')) {
+    return byTitle(t => t.includes('趨勢') || t.includes('佔')) ?? result.charts[0];
   }
   return result.charts[0];
 }
@@ -117,7 +122,7 @@ export function traceElement(
         steps: [
           `① 讀取工作表：${sheets.join('、') || '（未知）'}`,
           `② 取得 ${chart.categories.length} 個期間 × ${chart.series.length} 條數列的原始數值`,
-          `③ 套用公式：${metrics[0]?.formula ?? '市占率 = 個別銀行 / 全體銀行 × 100'}`,
+          `③ 套用公式：${metrics[0]?.formula ?? '依據資料欄位計算'}`,
           `④ 範例計算：${metrics[0]?.computationStep ?? '—'}`,
           `⑤ 依 ${chart.type === 'bar' ? '數值大小排序後取前 10 名' : '期間先後排序'} 繪製${chart.type === 'bar' ? '柱狀圖' : '折線圖'}`,
         ],
@@ -166,7 +171,7 @@ export function traceElement(
         steps.push(`比較方式：同期間、同工作表下並列，最大差距 ${gap} ${sorted[0].unit}`);
       }
       return {
-        origin: `${el.entities?.length ?? 0} 家銀行同期比較`,
+        origin: `${el.entities?.length ?? 0} 個實體同期比較`,
         kind: 'computed',
         metrics,
         sources,

@@ -14,6 +14,7 @@ import { readAllFiles } from './utils/file-reader';
 import { summariesToText, type FileSummary } from './utils/excel-reader';
 import { computeMetrics, type ComputeResult } from './utils/metric-engine';
 import { generateSlideSpec } from './utils/ai-slide-generator';
+import { exportWithTemplate } from './utils/template-exporter';
 import { isMonthlyFileSet, mergeMonthlyFiles } from './utils/multi-file-merger';
 
 const STEPS: { key: AppStage; label: string }[] = [
@@ -38,6 +39,7 @@ function App() {
   const computeResultRef = useRef<ComputeResult | null>(null);
   const excelSummaryRef = useRef<string>('');
   const pipelineResultRef = useRef<PipelineResult | null>(null);
+  const templateRef = useRef<File | null>(null);
   // ─── Browser history management (fix back button) ──────────
   useEffect(() => {
     const handlePopState = (e: PopStateEvent) => {
@@ -60,9 +62,10 @@ function App() {
     }
   }, [stage]);
 
-  const handleUploadComplete = useCallback((uploadedFiles: File[], userPrompt: string) => {
+  const handleUploadComplete = useCallback((uploadedFiles: File[], userPrompt: string, template?: File) => {
     setFiles(uploadedFiles);
     setPrompt(userPrompt);
+    templateRef.current = template ?? null;
     setStage('analyzing');
     
     // 1. Read Excel files in browser to get structure
@@ -93,11 +96,11 @@ function App() {
           .filter(m => m.rank && m.rank <= 5)
           .slice(0, 10);
         const dataSummary = [
-          `銀行數: ${result.summary.totalEntities}`,
-          `月份數: ${result.summary.totalPeriods}`,
+          `實體數: ${result.summary.totalEntities}`,
+          `期間數: ${result.summary.totalPeriods}`,
           `工作表: ${result.summary.sheetsUsed}`,
           '',
-          '前五名銀行（最新月份）:',
+          '前五名（最新期間）:',
           ...topMetrics.map(m => `  ${m.entity} ${m.metricName}: ${m.value}${m.unit} (排名${m.rank})`),
         ].join('\n');
 
@@ -130,8 +133,6 @@ function App() {
             ...pipelineResult.audience.narrativeStyle.map(d => `文字風格：${d}`),
             ...pipelineResult.audience.chartPreferences.map(d => `圖表偏好：${d}`),
             ...pipelineResult.audience.constraints.map(d => `限制：${d}`),
-            '期間格式為民國年月（11401 = 114年1月）',
-            '金額單位為新臺幣千元',
           ],
           suggestedSlides: pipelineResult.suggestedSlides,
           insights: pipelineResult.insights.map(i => ({
@@ -211,14 +212,29 @@ function App() {
       return;
     }
     setStage('exporting');
-    import('./utils/pptx-exporter')
-      .then(({ exportPptx }) => exportPptx(slideSpecs, computeResultRef.current))
-      .then(() => setStage('preview'))
-      .catch(err => {
-        console.error('[App] PPTX export failed:', err);
-        alert('匯出失敗：' + (err?.message ?? String(err)));
-        setStage('preview');
-      });
+
+    const template = templateRef.current;
+
+    if (template) {
+      // Use python-pptx backend to render onto the user's template
+      exportWithTemplate(template, slideSpecs, computeResultRef.current)
+        .then(() => setStage('preview'))
+        .catch(err => {
+          console.error('[App] Template PPTX export failed:', err);
+          alert('模板匯出失敗：' + (err?.message ?? String(err)));
+          setStage('preview');
+        });
+    } else {
+      // Fallback: browser-side PptxGenJS (no template)
+      import('./utils/pptx-exporter')
+        .then(({ exportPptx }) => exportPptx(slideSpecs, computeResultRef.current))
+        .then(() => setStage('preview'))
+        .catch(err => {
+          console.error('[App] PPTX export failed:', err);
+          alert('匯出失敗：' + (err?.message ?? String(err)));
+          setStage('preview');
+        });
+    }
   }, [slideSpecs]);
 
   const getStepStatus = (stepKey: AppStage) => {
@@ -294,30 +310,18 @@ function App() {
 function generateMockPlan(prompt: string): AnalysisPlan {
   return {
     formulas: [
-      { id: 'f1', name: '指標A市占率', definition: 'entity_amount / total_amount × 100', supported: true },
-      { id: 'f2', name: '指標B市占率', definition: 'entity_cards / total_cards × 100', supported: true },
-      { id: 'f3', name: '月增率 (MoM)', definition: '(current - previous) / previous × 100', supported: true },
-      { id: 'f4', name: '有效卡率', definition: 'active_cards / total_cards × 100', supported: true },
-      { id: 'f5', name: '單位平均貢獻', definition: 'total_amount / active_cards', supported: true },
-      { id: 'f6', name: '排名', definition: '各銀行依數值由大至小排列', supported: true },
+      { id: 'f1', name: '（由 AI 依據資料決定）', definition: '待 AI 分析後自動產生', supported: true },
     ],
-    unsupported: [
-      { name: '年增率 (YoY)', reason: '缺少 113 年同期資料，無法計算年增率' },
-    ],
+    unsupported: [],
     assumptions: [
-      '期間格式為民國年月（11401 = 114年1月）',
-      '金額單位為新台幣百萬元',
-      '市占率以全體銀行為分母計算',
+      '所有指標依據上傳資料的實際欄位計算',
       '排名依數值由大至小排列',
     ],
     suggestedSlides: [
-      '封面：年度市場分析',
-      '市占率趨勢圖（折線圖）',
-      '排名比較（柱狀圖）',
-      '月增率變化（折線圖）',
-      '有效卡率比較（柱狀圖）',
-      '競爭分析洞察',
-      '結論與策略建議',
+      '封面',
+      '數據分析',
+      '趨勢圖表',
+      '結論與建議',
     ],
   };
 }

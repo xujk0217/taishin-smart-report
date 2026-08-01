@@ -10,7 +10,7 @@ import type { ComputeResult } from './metric-engine';
  */
 export function exportCSV(
   result: ComputeResult | null,
-  fileName = '台新信用卡分析數據.csv',
+  fileName = '數據分析報告.csv',
 ): void {
   if (!result) {
     alert('沒有可匯出的計算結果');
@@ -21,7 +21,7 @@ export function exportCSV(
 
   // Section 1: Metrics
   lines.push('=== 計算指標 ===');
-  lines.push('指標ID,指標名稱,銀行,期間,數值,單位,排名,公式,計算過程');
+  lines.push('指標ID,指標名稱,實體,期間,數值,單位,排名,公式,計算過程');
   for (const m of result.metrics) {
     lines.push([
       m.metricId,
@@ -38,7 +38,7 @@ export function exportCSV(
 
   lines.push('');
   lines.push('=== 原始資料來源 ===');
-  lines.push('來源ID,檔案,工作表,儲存格,銀行,期間,原始值,解析數值');
+  lines.push('來源ID,檔案,工作表,儲存格,實體,期間,原始值,解析數值');
   for (const s of result.sourceRefs) {
     lines.push([
       s.sourceId,
@@ -66,7 +66,7 @@ export function exportCSV(
   lines.push('');
   lines.push('=== 摘要 ===');
   lines.push(`工作表數,${result.summary.sheetsUsed}`);
-  lines.push(`銀行數,${result.summary.totalEntities}`);
+  lines.push(`實體數,${result.summary.totalEntities}`);
   lines.push(`期間數,${result.summary.totalPeriods}`);
   lines.push(`指標數,${result.summary.totalMetrics}`);
   lines.push(`圖表數,${result.charts.length}`);

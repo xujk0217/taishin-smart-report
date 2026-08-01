@@ -10,7 +10,7 @@ import { resolveChart } from './provenance';
 export async function exportPDF(
   slides: SlideSpec[],
   result: ComputeResult | null,
-  fileName = '台新信用卡分析報告.pdf',
+  fileName = '數據分析報告.pdf',
 ): Promise<void> {
   // Dynamic import to keep bundle small
   const { jsPDF } = await import('jspdf');
@@ -28,7 +28,7 @@ export async function exportPDF(
 
     // Background
     if (spec.background !== '002') {
-      pdf.setFillColor(248, 232, 232);
+      pdf.setFillColor(239, 246, 255);
       pdf.rect(0, 0, W, H, 'F');
     }
 
@@ -59,7 +59,7 @@ export async function exportPDF(
           case 'heading':
             pdf.setFont('helvetica', 'bold');
             pdf.setFontSize(16);
-            pdf.setTextColor(192, 27, 43);
+            pdf.setTextColor(59, 130, 246);
             pdf.text(el.content ?? '', MARGIN, y);
             y += 10;
             break;
@@ -89,7 +89,7 @@ export async function exportPDF(
               for (const m of el.metrics) {
                 pdf.setFont('helvetica', 'bold');
                 pdf.setFontSize(14);
-                pdf.setTextColor(192, 27, 43);
+                pdf.setTextColor(59, 130, 246);
                 pdf.text(m.value, MARGIN, y);
                 pdf.setFont('helvetica', 'normal');
                 pdf.setFontSize(9);
@@ -105,7 +105,7 @@ export async function exportPDF(
             if (el.entities?.length) {
               pdf.setFontSize(10);
               for (const e of el.entities.slice(0, 6)) {
-                pdf.setTextColor(e.highlight ? 192 : 44, e.highlight ? 27 : 62, e.highlight ? 43 : 80);
+                pdf.setTextColor(e.highlight ? 59 : 44, e.highlight ? 130 : 62, e.highlight ? 246 : 80);
                 pdf.setFont('helvetica', e.highlight ? 'bold' : 'normal');
                 pdf.text(`${e.name}: ${e.value}`, MARGIN, y);
                 y += 5.5;
@@ -149,7 +149,7 @@ export async function exportPDF(
               pdf.setFont('helvetica', 'bold');
               pdf.setFontSize(9);
               pdf.setTextColor(255, 255, 255);
-              pdf.setFillColor(192, 27, 43);
+              pdf.setFillColor(59, 130, 246);
               pdf.rect(MARGIN, y - 3.5, W - MARGIN * 2, 5.5, 'F');
               const colW = (W - MARGIN * 2) / el.headers.length;
               el.headers.forEach((h, i) => pdf.text(h, MARGIN + i * colW + 2, y));

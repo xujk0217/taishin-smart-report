@@ -33,7 +33,7 @@ export type ElementType =
  * How much of the page this element should occupy (approximate area fraction).
  *   small  ≈ 10-15% (a one-line insight, a source footnote)
  *   medium ≈ 20-35% (a KPI row, a 3-bullet list, a text paragraph)
- *   large  ≈ 40-60% (a chart, a 6-row table, a multi-bank comparison)
+ *   large  ≈ 40-60% (a chart, a 6-row table, a multi-entity comparison)
  *   full   ≈ 70-90% (a chart that IS the page, a large data table)
  */
 export type ElementSize = 'small' | 'medium' | 'large' | 'full';

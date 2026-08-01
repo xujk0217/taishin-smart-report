@@ -16,9 +16,9 @@ export const CANVAS_W = 1280;
 export const CANVAS_H = 720;
 
 const BG_MAP: Record<string, string> = {
-  '001': '/template-slides/slide-cover.jpg',
-  '002': '/template-slides/slide-content.jpg',
-  '003': '/template-slides/slide-backcover.jpg',
+  '001': '',  // Brand decorative — rendered as gradient (no image dependency)
+  '002': '',  // Clean white — no background image needed
+  '003': '',  // Back cover — rendered as gradient (no image dependency)
 };
 
 interface Props {
@@ -37,9 +37,15 @@ export function SlideCanvas({
   spec, computeResult, width, thumbnail = false, highlightIndex = null, onElementClick,
 }: Props) {
   const scale = width / CANVAS_W;
-  const bgUrl = BG_MAP[spec.background] ?? BG_MAP['002'];
   const centered = spec.layout === 'cover' || spec.layout === 'section_title' || spec.layout === 'backcover';
   const onDark = spec.background !== '002';
+
+  // Background styles: gradient for brand pages, white for content
+  const bgStyle: React.CSSProperties = spec.background === '002'
+    ? { background: '#FFFFFF' }
+    : spec.background === '003'
+      ? { background: 'linear-gradient(135deg, #1E3A5F 0%, #2563EB 100%)' }
+      : { background: 'linear-gradient(135deg, #EFF6FF 0%, #DBEAFE 50%, #BFDBFE 100%)' };
 
   return (
     <div
@@ -61,9 +67,7 @@ export function SlideCanvas({
           position: 'absolute',
           top: 0,
           left: 0,
-          backgroundImage: `url(${bgUrl})`,
-          backgroundSize: 'cover',
-          backgroundPosition: 'center',
+          ...bgStyle,
           display: 'flex',
           flexDirection: 'column',
           justifyContent: centered ? 'center' : 'flex-start',
@@ -107,9 +111,10 @@ function CenteredLayout({ spec, onDark }: { spec: SlideSpec; onDark: boolean }) 
   const title = spec.elements.find(e => e.type === 'title');
   const subtitle = spec.elements.find(e => e.type === 'subtitle');
   const extras = spec.elements.filter(e => e.type !== 'title' && e.type !== 'subtitle');
-  // Cover, section_title, backcover: use BLACK titles per user request
-  const titleColor = '#222222';
-  const subColor = '#555555';
+  // Backcover (003) has dark background → white text; others → dark text
+  const isDarkBg = spec.background === '003';
+  const titleColor = isDarkBg ? '#FFFFFF' : '#1F2937';
+  const subColor = isDarkBg ? 'rgba(255,255,255,0.8)' : '#4B5563';
 
   return (
     <div
@@ -190,7 +195,7 @@ function ContentLayout({
       onClick={onElementClick ? () => onElementClick(index) : undefined}
       style={{
         cursor: onElementClick ? 'pointer' : 'default',
-        outline: highlightIndex === index ? '3px solid #C0392B' : 'none',
+        outline: highlightIndex === index ? '3px solid #3B82F6' : 'none',
         outlineOffset: 4,
         borderRadius: 6,
       }}
@@ -253,7 +258,7 @@ function ElementView({
   switch (el.type) {
     case 'title':
       return (
-        <div style={{ fontSize: 34, fontWeight: 800, color: '#C0392B', lineHeight: 1.25 }}>
+        <div style={{ fontSize: 34, fontWeight: 800, color: '#3B82F6', lineHeight: 1.25 }}>
           {el.content}
         </div>
       );
@@ -264,10 +269,10 @@ function ElementView({
     case 'heading':
       return (
         <div>
-          <div style={{ fontSize: 26, fontWeight: 700, color: '#C0392B', lineHeight: 1.3 }}>
+          <div style={{ fontSize: 26, fontWeight: 700, color: '#3B82F6', lineHeight: 1.3 }}>
             {el.content}
           </div>
-          <div style={{ width: 150, height: 4, background: '#C0392B', marginTop: 8, borderRadius: 2 }} />
+          <div style={{ width: 150, height: 4, background: '#3B82F6', marginTop: 8, borderRadius: 2 }} />
         </div>
       );
 
@@ -324,15 +329,15 @@ function ElementView({
         }}>
           {el.metrics?.map((m, i) => (
             <div key={i} style={{
-              background: '#FDEDEC',
-              border: '2px solid #F5B7B1',
+              background: '#EFF6FF',
+              border: '2px solid #93C5FD',
               borderRadius: 10,
               padding: '8px 14px',
               textAlign: 'center',
               flex: vertical ? '0 0 auto' : '1 1 0',
               minWidth: vertical ? 0 : 150,
             }}>
-              <div style={{ fontSize: 26, fontWeight: 800, color: '#C0392B', lineHeight: 1.15 }}>
+              <div style={{ fontSize: 26, fontWeight: 800, color: '#3B82F6', lineHeight: 1.15 }}>
                 {m.value}
               </div>
               <div style={{ fontSize: 16, color: '#7F8C8D', marginTop: 2 }}>
@@ -371,9 +376,9 @@ function ElementView({
               padding: '9px 14px',
               borderRadius: 8,
               fontSize: 18,
-              background: e.highlight ? '#FDEDEC' : '#F4F6F6',
-              border: e.highlight ? '2px solid #C0392B' : '1px solid #D5DBDB',
-              color: e.highlight ? '#C0392B' : '#2C3E50',
+              background: e.highlight ? '#EFF6FF' : '#F4F6F6',
+              border: e.highlight ? '2px solid #3B82F6' : '1px solid #D5DBDB',
+              color: e.highlight ? '#3B82F6' : '#2C3E50',
               fontWeight: e.highlight ? 700 : 400,
               flex: vertical ? '0 0 auto' : '1 1 0',
               textAlign: 'center',

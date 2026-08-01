@@ -69,153 +69,85 @@ const API_KEY = import.meta.env.VITE_OPENCODE_KEY || import.meta.env.VITE_GROQ_K
 
 // ─── System Prompt ───────────────────────────────────────────
 
-const SYSTEM_PROMPT = `你是專業的簡報規劃 AI，為使用者設計數據分析報告。
+const SYSTEM_PROMPT = `你是專業的簡報規劃 AI，為使用者將資料轉化為簡報。
 
-## 頁面結構規則（最重要！）
+## 你的自由度
+你可以完全自由決定：
+- 簡報的結構（要不要目錄、要不要段落標題頁、要幾頁）
+- 每頁的內容組合（哪些元素、多少個、什麼順序）
+- 圖表的類型和數據選擇
+- 文字敘述的風格和深度
+- 是否需要封面/封底（通常需要，但不強制）
 
-你要生成的簡報必須包含以下結構性頁面＋內容頁面：
-
-### 結構性頁面（不占內容頁名額）
-1. **封面** (page 1): layout="cover", background="001"
-   - 元素: title（黑色大標題）+ subtitle（報告副標/日期）
-2. **目錄** (page 2): layout="toc", background="002"
-   - 元素: title="目錄" + bullet_list（列出所有段落標題）
-3. **段落標題頁**: layout="section_title", background="001"
-   - 每個分析主題前要有一頁，只放 title（黑色）+ subtitle（段落簡述）
-4. **封底** (最後一頁): layout="backcover", background="003"
-   - 元素: title="謝謝"（黑色）+ subtitle="智匯數據簡報神器"
-
-### 內容頁面
-- layout="content", background="002"
-- 必須涵蓋使用者需求中的所有分析面向
-
-### 版面覆蓋率原則（取代固定元素數量限制）
-- 每頁的版面覆蓋率目標約 75-85%（不要太多空白，也不要擠到放不下）
-- 每個元素帶一個 size 欄位：small（10-15%面積）/ medium（20-35%）/ large（40-60%）/ full（70-90%）
-- 如果一個元素內容很多（例如表格有 20 行、比較 10 家銀行），給它 large 或 full，並獨佔一頁或只搭配小元素
-- 如果多個元素都很小，可以放在同一頁，但不要只有一兩行文字就佔一整頁
-- 圖表通常是 large（佔 40-60%），搭配 medium 的 kpi_block + small 的 insight + small 的 source
-- 大量文字分析或比較表用 large 或 full，讓內容有呼吸空間
-- 寧可拆成兩頁讓每頁充實，也不要把太多東西擠在一頁造成閱讀困難
-
-### 數量限制動態規則
-- 不要固定寫死「至少幾個」或「最多幾家」
-- 一切依使用者 Prompt 決定（使用者說比較 7 家就 7 家，說全部就全部）
-- 如果使用者沒指定數量，根據報告對象的 depth 決定：
-  - executive：只放最關鍵的 3-5 項
-  - detailed：放主要的 5-8 項
-  - technical：完整列出所有
-
-### 頁數規則
-- 若使用者訊息中提供了「簡報藍圖」，總頁數必須與藍圖完全一致，逐頁照做
-- 若沒有藍圖，依使用者要求的頁數；使用者沒指定才自行規劃
-
-### 頁面配置範例（15 頁）
-- 封面 1 頁、目錄 1 頁
-- 段落A標題 1 頁 → 段落A內容 2-3 頁
-- 段落B標題 1 頁 → 段落B內容 2-3 頁
-- 段落C標題 1 頁 → 段落C內容 1-2 頁
-- 結論 1 頁、封底 1 頁
+## 建議結構（僅供參考，你可以自由調整）
+- 一般簡報會有封面 → 內容頁 → 結論 → 封底
+- 內容較多時可加目錄頁和段落標題頁
+- 但如果使用者只要 3 頁，你可以跳過目錄和段落標題
 
 ## 背景圖
-- "001" = 品牌裝飾背景（用於封面、段落標題、封底）
-- "002" = 乾淨白底（用於目錄、所有內容頁）
-- "003" = 品牌結束頁背景（只用於封底）
+- "001" = 品牌裝飾背景（適合封面、段落標題）
+- "002" = 乾淨白底（適合資料密集的內容頁）
+- "003" = 深色結束背景（適合封底）
 
-## 元素類型
-- "title": 標題文字（封面/段落標題/封底用黑色）
+## Layout 類型
+- "cover": 封面（居中大標題）
+- "toc": 目錄
+- "section_title": 段落標題頁（居中）
+- "content": 一般內容頁
+- "backcover": 封底
+
+## 元素類型（AI 自由選用）
+- "title": 標題
 - "subtitle": 副標題
-- "heading": 內容頁的區塊標題
-- "chart": 圖表。需指定 chartType ("line"/"bar") + dataKey
-  - dataKey 可選: "market_share_trend", "ranking_latest", "mom_trend", "card_count_trend"
-- "text_block": 2-4 句深度分析段落
+- "heading": 內容頁區塊標題
+- "chart": 圖表，指定 chartType ("line"/"bar"/"pie") + dataKey（對應計算引擎的 chartId）
+- "text_block": 段落文字（長度不限）
 - "bullet_list": 要點列表，items 陣列
 - "kpi_block": 數字展示，metrics: [{label, value, rank?, trend?}]
-- "insight": 一句 AI 洞察（精練觀點）
-- "comparison": 銀行比較，entities: [{name, value, highlight?}]
+- "insight": 洞察觀點
+- "comparison": 比較，entities: [{name, value, highlight?}]
 - "table": 資料表，headers + rows
-- "source": 來源標註（底部小字）
+- "source": 來源標註
 
-## 內容頁規則
-1. 頁面覆蓋率 75-85%：不要太空也不要太擠
-2. 每個元素帶 size 欄位（small/medium/large/full），表示佔頁面面積比例
-3. 圖表頁搭配 insight + source（圖表 size="large"，insight size="small"）
-4. 比較頁搭配 text_block 解讀差異原因
-5. text_block 要寫 3-4 句完整的分析段落，不要只有一句
-6. bullet_list 每條要有具體數字和觀點
-7. insight 要有策略建議，不只描述現象
-8. 如果一個元素資料量很大（如 10+ 家銀行比較、多行表格），給它 size="full" 並讓它獨佔一頁
-9. 數量限制（幾家銀行、幾個 KPI、幾條建議）全依 Prompt 決定，不要自行限制
-10. 結論頁可以拆成多頁：一頁放策略建議（bullet_list），一頁放目標數字（kpi_block）
+## 版面 size 欄位
+每個元素可帶 size: "small" / "medium" / "large" / "full"，表示佔頁面比例。
+AI 自行判斷每個元素應該多大。
+
+## 頁數規則
+- 若使用者訊息中有「簡報藍圖」，依藍圖頁數
+- 若使用者指定頁數，依指定
+- 否則 AI 根據資料量和需求自行決定
 
 ## 品質要求
-- 每個段落標題頁對應至少 1-3 頁內容頁
-- 目錄的 bullet_list 要列出所有段落標題
 - 所有數字必須與提供的數據一致
-- 頁碼 (page) 必須從 1 連續編到最後
+- 頁碼 (page) 從 1 連續編號
+- 每個欄位都要填真實內容，嚴禁空字串或 "..."
+- 標題要有資訊量，不要只寫一個標籤
 
 ## 輸出格式
 回傳純 JSON（不要 markdown 標記）：
-【絕對規則】
-- 每個欄位都要填真實內容，嚴禁輸出「...」、空字串或把欄位名稱當值
-- 標題必須帶訊息，不可只寫「數據分析」、「市占率」這種標籤
-- 所有數字必須來自提供的數據
-- 只輸出 JSON，不要有 markdown 標記
-
-輸出範例（格式示範，內容需依實際數據重寫）：
 {
   "slides": [
     {
       "page": 1,
       "background": "001",
       "layout": "cover",
-      "section": "開場",
-      "elements": [
- { "type": "title", "content": "年度市場數據分析報告" },
-        { "type": "subtitle", "content": "多實體 × 多期間分析｜智匯數據簡報神器" }
-      ]
-    },
-    {
-      "page": 2,
-      "background": "002",
-      "layout": "toc",
-      "elements": [
-        { "type": "title", "content": "目錄" },
-        { "type": "bullet_list", "items": ["一、市場定位", "二、成長動能", "三、策略建議"] }
-      ]
-    },
-    {
-      "page": 3,
-      "background": "002",
-      "layout": "content",
-      "section": "市場定位",
-      "elements": [
-        { "type": "heading", "content": "與第四名差距縮小至 1.30 個百分點" },
-        { "type": "chart", "chartType": "line", "dataKey": "market_share_trend" },
-        { "type": "kpi_block", "metrics": [
-          { "label": "市占率", "value": "10.67%", "rank": 5 },
-          { "label": "月增率", "value": "+11.62%", "trend": "↑" }
-        ]},
- { "type": "insight", "content": "重點實體表現接近競爭者，具備突破空間" },
-        { "type": "source", "content": "使用者上傳之資料 114年1-12月" }
-      ]
+      "section": "（可選）",
+      "elements": [...]
     }
   ]
 }`;
 
 // ─── Validation Prompt ───────────────────────────────────────
 
-const VALIDATION_PROMPT = `你是簡報品質審核員。檢查以下簡報 JSON 是否符合規則，如果有問題就修正後回傳完整 JSON。
+const VALIDATION_PROMPT = `你是簡報品質審核員。檢查以下簡報 JSON 是否有品質問題，如果有就修正後回傳完整 JSON。
 
 檢查項目：
-1. page 1 必須是 cover，page 2 必須是 toc（目錄）
-2. 最後一頁必須是 backcover
-3. 每個段落標題頁 (section_title) 後面必須有至少 1 頁 content
-4. 目錄的 bullet_list 是否列出了所有段落
-5. 頁碼是否從 1 連續遞增
-6. content 頁是否每頁至少有 heading + 2 個數據元素
-7. 是否有至少一個 chart, kpi_block, comparison
-8. 封面/段落標題/封底的 title 不應該是空的
+1. 頁碼是否從 1 連續遞增
+2. 每個元素是否都有實際內容（不是空字串或 "..."）
+3. 如果有 chart 元素，是否有指定 chartType 和 dataKey
+4. 內容頁是否至少有 1 個有意義的元素
+5. 整體簡報是否有完整的開頭和結尾
 
 如果全部正確，直接回傳原始 JSON。如果有問題，修正後回傳。
 只回傳 JSON，不要其他文字。`;
@@ -234,12 +166,12 @@ export async function generateSlideSpec(
 
   const dataSummary = [
     `工作表: ${computeResult.summary.sheetsUsed} 個`,
-    `銀行數: ${computeResult.summary.totalEntities}`,
-    `月份數: ${computeResult.summary.totalPeriods}`,
+    `實體數: ${computeResult.summary.totalEntities}`,
+    `期間數: ${computeResult.summary.totalPeriods}`,
     `總指標: ${computeResult.summary.totalMetrics}`,
     `可用圖表: ${computeResult.charts.length} 個`,
     '',
-    '前五名銀行指標（最新月份）:',
+    '前五名指標（最新期間）:',
     ...topMetrics.slice(0, 10).map(m =>
       `  ${m.entity} ${m.metricName}: ${m.value}${m.unit} (排名${m.rank})`
     ),
@@ -362,112 +294,106 @@ function parseSlideSpec(text: string): SlideSpec[] {
 
 function generateFallbackSpec(result: ComputeResult): PresentationSpec {
   const top5 = result.metrics
-    .filter(m => m.rank && m.rank <= 5 && m.metricName.includes('市占'))
+    .filter(m => m.rank && m.rank <= 5)
     .slice(0, 5);
+
+  // Derive section/chart titles from actual data rather than hard-coding
+  const chartTitles = result.charts.map(c => c.title);
+  const firstChart = result.charts[0];
+  const secondChart = result.charts[1];
 
   const slides: SlideSpec[] = [
     {
       page: 1, background: '001', layout: 'cover',
       elements: [
         { type: 'title', content: '數據分析報告', position: 'center' },
-        { type: 'subtitle', content: `${result.summary.totalEntities} 家銀行 × ${result.summary.totalPeriods} 個月份 · 114年度` },
+        { type: 'subtitle', content: `${result.summary.totalEntities} 個項目 × ${result.summary.totalPeriods} 個期間 · 智匯數據簡報神器` },
       ],
     },
     {
       page: 2, background: '002', layout: 'toc',
       elements: [
         { type: 'title', content: '目錄' },
-        { type: 'bullet_list', items: ['一、市場競爭態勢', '二、經營績效分析', '三、結論與策略建議'] },
+        { type: 'bullet_list', items: ['一、數據概覽', '二、趨勢分析', '三、結論與建議'] },
       ],
     },
     {
-      page: 3, background: '001', layout: 'section_title', section: '市場競爭',
+      page: 3, background: '001', layout: 'section_title', section: '數據概覽',
       elements: [
-        { type: 'title', content: '一、市場競爭態勢' },
-        { type: 'subtitle', content: '市占率、排名與銀行間比較' },
+        { type: 'title', content: '一、數據概覽' },
+        { type: 'subtitle', content: firstChart?.title ?? '關鍵指標與排名' },
       ],
     },
     {
-      page: 4, background: '002', layout: 'content', section: '市場競爭',
+      page: 4, background: '002', layout: 'content', section: '數據概覽',
       elements: [
-        { type: 'heading', content: '市占率趨勢分析' },
-        { type: 'chart', chartType: 'line', dataKey: 'market_share_trend' },
-        { type: 'insight', content: '前五大銀行合計市占超過 65%，市場集中度高' },
-        { type: 'source', content: '資料來源：使用者上傳之資料' },
+        { type: 'heading', content: firstChart?.title ?? '指標趨勢' },
+        { type: 'chart', chartType: (firstChart?.type ?? 'line') as 'line' | 'bar' | 'pie', dataKey: firstChart?.chartId ?? 'chart-1' },
+        ...(top5.length > 0 ? [{
+          type: 'kpi_block' as const,
+          metrics: top5.slice(0, 3).map(m => ({
+            label: m.metricName, value: `${m.value}${m.unit}`, rank: m.rank,
+          })),
+        }] : []),
+        { type: 'source', content: '資料來源：使用者上傳之報表' },
       ],
     },
     {
-      page: 5, background: '002', layout: 'content', section: '市場競爭',
+      page: 5, background: '002', layout: 'content', section: '數據概覽',
       elements: [
-        { type: 'heading', content: '最新月份銀行排名' },
-        { type: 'chart', chartType: 'bar', dataKey: 'ranking_latest' },
-        { type: 'comparison', entities: top5.map(m => ({ name: m.entity, value: `${m.value}%`, highlight: m.rank === 5 })) },
-        { type: 'source', content: '資料來源：使用者上傳之資料' },
+        { type: 'heading', content: secondChart?.title ?? '排名比較' },
+        ...(secondChart
+          ? [{ type: 'chart' as const, chartType: (secondChart.type ?? 'bar') as 'line' | 'bar' | 'pie', dataKey: secondChart.chartId }]
+          : []),
+        ...(top5.length > 0 ? [{
+          type: 'comparison' as const,
+          entities: top5.map(m => ({ name: m.entity, value: `${m.value}${m.unit}`, highlight: m.rank === 1 })),
+        }] : []),
+        { type: 'source', content: '資料來源：使用者上傳之報表' },
       ],
     },
     {
-      page: 6, background: '001', layout: 'section_title', section: '經營績效',
+      page: 6, background: '001', layout: 'section_title', section: '趨勢分析',
       elements: [
-        { type: 'title', content: '二、經營績效分析' },
-        { type: 'subtitle', content: '月增率與關鍵指標' },
+        { type: 'title', content: '二、趨勢分析' },
+        { type: 'subtitle', content: '期間變化與關鍵發現' },
       ],
     },
     {
-      page: 7, background: '002', layout: 'content', section: '經營績效',
+      page: 7, background: '002', layout: 'content', section: '趨勢分析',
       elements: [
-        { type: 'heading', content: '月增率趨勢分析' },
-        { type: 'chart', chartType: 'line', dataKey: 'mom_trend' },
-        { type: 'text_block', content: '各實體的環比成長率反映業務動能變化。重點實體月增率表現強勁。' },
- { type: 'insight', content: '重點實體月增率高於市場平均' },
-        { type: 'source', content: '資料來源：使用者上傳之資料' },
+        { type: 'heading', content: result.charts[2]?.title ?? '期間變化分析' },
+        ...(result.charts[2]
+          ? [{ type: 'chart' as const, chartType: (result.charts[2].type ?? 'line') as 'line' | 'bar' | 'pie', dataKey: result.charts[2].chartId }]
+          : [{ type: 'text_block' as const, content: '根據上傳資料進行的趨勢分析，詳細內容由 AI 生成。' }]),
+        { type: 'source', content: '資料來源：使用者上傳之報表' },
       ],
     },
     {
-      page: 8, background: '002', layout: 'content', section: '經營績效',
+      page: 8, background: '001', layout: 'section_title', section: '結論',
       elements: [
- { type: 'heading', content: '重點實體關鍵經營指標' },
-        { type: 'kpi_block', metrics: [
- { label: '市占率', value: `${top5[4]?.value ?? ''}%`, rank: 5 },
-          { label: '月增率', value: '+11.62%', trend: '↑' },
-          { label: '排名', value: '第 5 名' },
-        ]},
-        { type: 'bullet_list', items: [
-          '市占率穩定維持 10-11% 區間',
-          '旺季帶動成長',
-          '規模穩定，效率指標維持健康水準',
-        ]},
+        { type: 'title', content: '三、結論與建議' },
+        { type: 'subtitle', content: '綜合分析結果' },
       ],
     },
     {
-      page: 9, background: '001', layout: 'section_title', section: '結論',
+      page: 9, background: '002', layout: 'content', section: '結論',
       elements: [
-        { type: 'title', content: '三、結論與策略建議' },
-        { type: 'subtitle', content: '綜合分析與下一步建議' },
+        { type: 'heading', content: '分析摘要' },
+        { type: 'text_block', content: `本報告涵蓋 ${result.summary.totalEntities} 個分析項目、${result.summary.totalPeriods} 個期間，共計算 ${result.summary.totalMetrics} 項指標。` },
+        ...(top5.length > 0 ? [{
+          type: 'kpi_block' as const,
+          metrics: top5.slice(0, 3).map(m => ({
+            label: m.entity, value: `${m.value}${m.unit}`, rank: m.rank,
+          })),
+        }] : []),
       ],
     },
     {
-      page: 10, background: '002', layout: 'content', section: '結論',
-      elements: [
-        { type: 'heading', content: '策略建議' },
-        { type: 'bullet_list', items: [
-          '市占率穩定在第 5 名，與第 4 名差距不到 1 個百分點',
-          '市場前三名合計超過 49%',
-          '建議：深耕高消費族群，把握年末旺季',
-          '建議：關注有效卡率提升，降低停卡率',
-          '建議：強化數位支付場景，提升年輕族群滲透率',
-        ]},
-        { type: 'kpi_block', metrics: [
-          { label: '目標市占率', value: '11%+', trend: '↑' },
-          { label: '當前排名', value: '第 5', rank: 5 },
-          { label: '與第4名差距', value: '0.53%' },
-        ]},
-      ],
-    },
-    {
-      page: 11, background: '003', layout: 'backcover',
+      page: 10, background: '003', layout: 'backcover',
       elements: [
         { type: 'title', content: '謝謝', position: 'center' },
-        { type: 'subtitle', content: '智匯數據簡報神器 ｜ 智匯數據簡報神器' },
+        { type: 'subtitle', content: '智匯數據簡報神器' },
       ],
     },
   ];

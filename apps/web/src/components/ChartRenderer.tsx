@@ -6,18 +6,18 @@ import { useRef, useEffect } from 'react';
 import {
   Chart as ChartJS, CategoryScale, LinearScale, PointElement,
   LineElement, BarElement, Title, Tooltip, Legend, Filler,
-  LineController, BarController,
+  LineController, BarController, ArcElement, PieController, DoughnutController,
 } from 'chart.js';
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend, Filler, LineController, BarController);
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend, Filler, LineController, BarController, ArcElement, PieController, DoughnutController);
 
-const COLORS = ['#C0392B', '#2980B9', '#27AE60', '#F39C12', '#8E44AD', '#16A085'];
+const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#06B6D4'];
 
 interface Props {
   chartData: {
     chartId?: string;
     title?: string;
-    type: 'line' | 'bar';
+    type: 'line' | 'bar' | 'pie';
     categories?: string[];
     series?: { name: string; data: number[]; color?: string }[];
   };
@@ -42,21 +42,28 @@ export function ChartRenderer({ chartData, height = 200, compact = false }: Prop
     }
 
     chartInstance.current = new ChartJS(ctx, {
-      type: chartData.type,
+      type: chartData.type === 'pie' ? 'pie' : chartData.type,
       data: {
         labels: chartData.categories,
-        datasets: chartData.series.map((s, i) => ({
-          label: s.name,
-          data: s.data,
-          borderColor: s.color || COLORS[i % COLORS.length],
-          backgroundColor: chartData.type === 'bar'
-            ? (s.color || COLORS[i % COLORS.length])
-            : (s.color || COLORS[i % COLORS.length]) + '20',
-          fill: chartData.type === 'line',
-          tension: 0.3,
-          borderWidth: 2,
-          pointRadius: chartData.type === 'line' ? 2 : 0,
-        })),
+        datasets: chartData.type === 'pie'
+          ? [{
+              data: chartData.series?.[0]?.data ?? [],
+              backgroundColor: COLORS.map(c => c + 'CC'),
+              borderColor: COLORS,
+              borderWidth: 1,
+            }]
+          : chartData.series.map((s, i) => ({
+              label: s.name,
+              data: s.data,
+              borderColor: s.color || COLORS[i % COLORS.length],
+              backgroundColor: chartData.type === 'bar'
+                ? (s.color || COLORS[i % COLORS.length])
+                : (s.color || COLORS[i % COLORS.length]) + '20',
+              fill: chartData.type === 'line',
+              tension: 0.3,
+              borderWidth: 2,
+              pointRadius: chartData.type === 'line' ? 2 : 0,
+            })),
       },
       options: {
         responsive: true,
@@ -65,24 +72,28 @@ export function ChartRenderer({ chartData, height = 200, compact = false }: Prop
         devicePixelRatio: compact ? 1 : undefined,
         plugins: {
           legend: {
-            position: 'bottom',
+            position: chartData.type === 'pie' ? 'right' : 'bottom',
             labels: { font: { size: compact ? 13 : 15 }, boxWidth: compact ? 10 : 14, padding: 8 },
           },
           tooltip: {
             enabled: !compact,
-            callbacks: { label: (c) => `${c.dataset.label}: ${c.parsed.y?.toFixed(2)}%` },
+            callbacks: chartData.type === 'pie'
+              ? undefined
+              : { label: (c) => `${c.dataset.label}: ${c.parsed.y?.toFixed(2)}%` },
           },
         },
-        scales: {
-          x: {
-            ticks: { font: { size: compact ? 12 : 14 }, maxRotation: 45 },
-            grid: { display: false },
+        ...(chartData.type !== 'pie' ? {
+          scales: {
+            x: {
+              ticks: { font: { size: compact ? 12 : 14 }, maxRotation: 45 },
+              grid: { display: false },
+            },
+            y: {
+              ticks: { font: { size: compact ? 12 : 14 }, callback: (v) => v + '%' },
+              grid: { color: '#eee' },
+            },
           },
-          y: {
-            ticks: { font: { size: compact ? 12 : 14 }, callback: (v) => v + '%' },
-            grid: { color: '#eee' },
-          },
-        },
+        } : {}),
       },
     });
 

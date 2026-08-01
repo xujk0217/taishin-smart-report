@@ -5,6 +5,10 @@
  * Step 2: Metrics  — 指標探索（提取 → 對應 → 補齊）
  * Step 3: Insights — 每個主題的策略洞察
  * Step 4: Blueprint— 簡報架構設計（逐頁內容規劃）
+ * Step 5: Compliance — 一致性驗證
+ *
+ * Core capability: automatically identifies cross-table relationships,
+ * field mappings, and aggregation logic from any uploaded reports.
  *
  * Every step generates, then validates, then proceeds.
  *
@@ -280,7 +284,7 @@ const BRIEF_SYSTEM = `你是專業的數據分析顧問，負責解讀使用者�
   "audience": "事業部主管",
   "purpose": "年度市場表現回顧與策略規劃",
   "tone": "正式策略報告，以數據支撐論點，強調競爭定位與可執行建議",
-  "focusAreas": ["市占率趨勢", "競爭態勢", "效率指標"],
+  "focusAreas": ["趨勢分析", "競爭態勢", "效率指標"],
   "depth": "executive",
   "requestedPageCount": 20,
   "designDirectives": ["品牌色系", "每頁最多一張主圖表"],
@@ -301,10 +305,10 @@ export async function analyzeAudience(
   );
 
   const fallback: AudienceContext = {
-    audience: '事業部主管',
-    purpose: '市場分析報告',
-    tone: '正式策略報告',
-    focusAreas: ['市占率', '排名', '月增率'],
+    audience: '決策者',
+    purpose: '資料分析報告',
+    tone: '正式報告',
+    focusAreas: ['趨勢分析', '比較分析', '關鍵發現'],
     depth: 'detailed',
     requestedPageCount: null,
     designDirectives: [],
@@ -354,7 +358,7 @@ const EXTRACT_SYSTEM = `你是需求解析工具。從使用者的需求文字�
 - 全部列完，不可用省略號
 
 輸出範例（格式示範）：
-{"requestedMetrics": ["指標A市占率", "指標B成長率", "效率比率"]}`;
+{"requestedMetrics": ["指標A趨勢", "指標B比較", "效率分析"]}`;
 
 
 const MAP_SYSTEM = `你是數據分析專家。使用者列出的每一個指標，你都必須逐項回答能不能算，一項都不能跳過。
@@ -368,11 +372,11 @@ const MAP_SYSTEM = `你是數據分析專家。使用者列出的每一個指標
   "metrics": [
     {
       "id": "m1",
-      "name": "市占率",
-      "definition": "個別實體數值 ÷ 總計數值 × 100%",
-      "category": "市占率",
+      "name": "指標A分析",
+      "definition": "依據資料中的實際欄位計算",
+      "category": "核心指標",
       "supported": true,
-      "relevanceToAudience": "直接反映在消費市場的競爭地位，是主管最關注的排名依據"
+      "relevanceToAudience": "直接反映核心表現，是決策者最關注的指標"
     }
   ],
   "unsupported": [
@@ -465,15 +469,15 @@ const INSIGHTS_SYSTEM = `你是策略顧問，負責從數據中找出有決策�
 每個洞察必須包含：
 - topic：主題名稱，對應一個分析面向
 - keyFinding：核心發現。像新聞標題一樣具體，必須含數字
-- dataPoints：2 到 4 個支撐數據，每一筆都要標明銀行、期間、數值，且必須出自提供的數據
-- implication：這件事對重點實體的意義（So What）
+- dataPoints：2 到 4 個支撐數據，每一筆都要標明實體名稱、期間、數值，且必須出自提供的數據
+- implication：這件事對使用者的意義（So What）
 - recommendation：具體可執行的建議（Now What），要能指出做什麼、對誰做
-- chartSuggestion：line／bar／kpi／comparison／table 之一
+- chartSuggestion：line／bar／pie／kpi／comparison／table 之一
 
 品質要求：
 - 洞察要有解讀，不能只是把數字念一遍
 - 要指出趨勢、落差、異常、機會或威脅
-- 建議要具體到可以排進工作計畫，不要寫「加強行銷」這種空話
+- 建議要具體到可以排進工作計畫，不要寫「持續關注」這種空話
 - 只能用提供的數據。資料不足的面向就不要產出該洞察，也不要用推測補足
 - 每個重點面向產出 1 到 2 個洞察
 
@@ -481,15 +485,15 @@ const INSIGHTS_SYSTEM = `你是策略顧問，負責從數據中找出有決策�
 {
   "insights": [
     {
-      "topic": "市占率競爭態勢",
-      "keyFinding": "前二大銀行合計市占 36.55%，重點實體以 10.67% 位居第五，與上一名僅差 1.30 個百分點",
+      "topic": "核心指標分析",
+      "keyFinding": "前二名合計佔 36.55%，重點對象以 10.67% 位居第五，與上一名僅差 1.30 個百分點",
       "dataPoints": [
-        "第一名 11412 市占率 18.50%，排名第 1",
-        "第四名 指標A 11.97%",
-        "重點實體 11412 市占率 10.67%，排名第 5"
+        "第一名最新期數值 18.50%，排名第 1",
+        "第四名數值 11.97%",
+        "重點對象最新期 10.67%，排名第 5"
       ],
-      "implication": "重點實體與第四名差距不到 1.5 個百分點，屬於可在一年內翻轉的距離，但同時也面臨被第六名追上的風險",
-      "recommendation": "鎖定競爭者重疊客群的高頻消費場景，優先在餐飲與網購通道加碼回饋，目標一年內將市占推升至 12%",
+      "implication": "重點對象與第四名差距不到 1.5 個百分點，具備短期超越可能，但同時面臨被後方追趕的風險",
+      "recommendation": "聚焦核心優勢領域加大投入，目標一年內提升至 12%",
       "chartSuggestion": "bar"
     }
   ]
@@ -581,11 +585,11 @@ const OUTLINE_SYSTEM = `你是簡報架構設計師。先規劃整份簡報的�
 
 輸出範例（格式示範，內容依實際分析結果重新規劃）：
 {
-  "narrative": "重點實體與第四名差距縮小至 1.3 個百分點，明年是搶進前四的窗口",
+  "narrative": "重點對象與第四名差距縮小至 1.3 個百分點，是加速突破的最佳時機",
   "sections": [
-    { "title": "開場", "purpose": "兩頁內讓主管掌握全局與主要結論", "contentPages": 1, "insightTopics": [] },
-    { "title": "市場定位", "purpose": "用市占與排名確立重點實體的競爭位置", "contentPages": 3, "insightTopics": ["市占率競爭態勢"] },
-    { "title": "成長動能", "purpose": "拆解月增率與消費力的成長來源", "contentPages": 2, "insightTopics": ["月增率表現"] },
+    { "title": "開場", "purpose": "兩頁內讓決策者掌握全局與主要結論", "contentPages": 1, "insightTopics": [] },
+    { "title": "現況分析", "purpose": "確立重點對象的定位與比較", "contentPages": 3, "insightTopics": ["核心指標分析"] },
+    { "title": "趨勢解讀", "purpose": "解讀關鍵數據的變化方向", "contentPages": 2, "insightTopics": ["趨勢變化"] },
     { "title": "結論與建議", "purpose": "收斂成可執行的優先行動", "contentPages": 2, "insightTopics": [] },
     { "title": "結語", "purpose": "結束", "contentPages": 0, "insightTopics": [] }
   ]
@@ -595,19 +599,19 @@ const SECTION_PAGES_SYSTEM = `你是簡報架構設計師。把一個段落展�
 
 ## 規則
 1. 一頁一個訊息：message 是這頁唯一想讓聽眾記住的句子，必須具體且含數字
-2. pageTitle 是這個訊息的濃縮。不可以只寫「數據分析」、「市占率」這種沒有訊息的標籤
+2. pageTitle 是這個訊息的濃縮。不可以只寫「數據分析」這種沒有訊息的標籤
 3. 數據與洞察成對：同一頁要有數據元素（chart／kpi_block／comparison／table）
    也要有解讀元素（insight／text_block）
 4. 視覺節奏：同一段落內不要每頁都用一樣的元素組合
 5. content 頁的版面覆蓋率目標 75-85%，每個元素帶 size 欄位（small/medium/large/full）
 6. 用到數據的頁面在 metricIds 標明，承接洞察的在 insightTopics 標明
-7. 如果一個元素的資料量很大（10家以上比較、多行表格），給 size="full" 獨佔一頁
+7. 如果一個元素的資料量很大（10 項以上比較、多行表格），給 size="full" 獨佔一頁
 8. 寧可拆成兩頁讓每頁充實清晰，也不要擠在一頁
 
 ## 元素填入指南
 - chart: size="large"，搭配 kpi_block(size="medium") 標註關鍵數字
 - kpi_block: 數量依 prompt 決定，不要自行限制
-- comparison: 銀行數量依 prompt 決定（使用者說幾家就幾家）
+- comparison: 實體數量依 prompt 決定（使用者說幾個就幾個）
 - text_block: 3-4 句完整分析（趨勢描述+原因推斷+策略意涵）, size="medium"
 - bullet_list: 每條都要有數字和觀點, size 依條目數決定
 - insight: 策略性結論（含行動方向）, size="small"
@@ -622,18 +626,18 @@ heading、chart、kpi_block、comparison、table、insight、text_block、bullet
     {
       "pageTitle": "與第四名差距縮小至 1.30 個百分點",
       "layout": "content",
-      "message": "重點實體 10.67% 對第四名 11.97%，差距是三年來最小",
+      "message": "重點對象 10.67% 對第四名 11.97%，差距是三年來最小",
       "elements": ["heading", "chart", "kpi_block", "insight", "source"],
       "metricIds": ["m1"],
-      "insightTopics": ["市占率競爭態勢"]
+      "insightTopics": ["核心指標分析"]
     },
     {
-      "pageTitle": "前五大銀行合計掌握七成市場",
+      "pageTitle": "前五大項目合計掌握七成份額",
       "layout": "content",
-      "message": "前二名合計 36.55%，市場集中度持續升高",
+      "message": "前二名合計 36.55%，集中度持續升高",
       "elements": ["heading", "comparison", "text_block", "source"],
       "metricIds": ["m1"],
-      "insightTopics": ["市占率競爭態勢"]
+      "insightTopics": ["核心指標分析"]
     }
   ]
 }`;
@@ -1005,7 +1009,7 @@ function buildFallbackArchitecture(
       {
         pageTitle: '謝謝',
         layout: 'backcover',
-        message: '智匯數據簡報神器',
+        message: 'AI 報表轉簡報自動化系統',
         elements: ['title', 'subtitle'],
       },
     ],
@@ -1039,15 +1043,15 @@ const COMPLIANCE_SYSTEM = `你是品質審核員。比對使用者的原始需�
   "passed": false,
   "checkedItems": 12,
   "gaps": [
-    "使用者要求分析「停卡率」但 metrics 中沒有此指標",
-    "使用者要求「競爭者比較」但洞察中缺少跨銀行比較的主題"
+    "使用者要求分析「離職率」但 metrics 中沒有此指標",
+    "使用者要求「競爭者比較」但洞察中缺少跨實體比較的主題"
   ],
   "corrections": {
     "additionalMetrics": [
-      {"name":"停卡率","definition":"A欄位 ÷ B欄位 × 100%","category":"效率","relevanceToAudience":"反映客戶流失情況"}
+      {"name":"離職率","definition":"A欄位 ÷ B欄位 × 100%","category":"效率","relevanceToAudience":"反映流失情況"}
     ],
     "additionalInsights": [
-      {"topic":"競爭者比較","keyFinding":"前二名合計市占36.55%，遠超重點實體10.67%","dataPoints":["第一名18.50%","第二名18.05%","重點實體10.67%"],"implication":"市場集中度高，重點實體需差異化突圍","recommendation":"避免正面價格戰，聚焦特定消費場景","chartSuggestion":"comparison"}
+      {"topic":"競爭者比較","keyFinding":"前二名合計佔 36.55%，遠超重點對象 10.67%","dataPoints":["第一名18.50%","第二名18.05%","重點對象10.67%"],"implication":"集中度高，需差異化突圍","recommendation":"避免正面競爭，聚焦特定領域深耕","chartSuggestion":"comparison"}
     ]
   }
 }

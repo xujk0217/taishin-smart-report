@@ -49,7 +49,7 @@ export function getAuditLog(): AuditRecord[] {
 
 export function SendStage({ slideCount, onDone, onBack }: Props) {
   const [recipients, setRecipients] = useState('');
-  const [subject, setSubject] = useState('台新信用卡市場分析報告');
+  const [subject, setSubject] = useState('數據分析報告');
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState<AuditRecord | null>(null);
 
@@ -138,7 +138,7 @@ export function SendStage({ slideCount, onDone, onBack }: Props) {
         <textarea
           className="textarea"
           rows={3}
-          placeholder="例：wang.manager@taishin.com, liu.vp@taishin.com"
+          placeholder="例：manager@company.com, director@company.com"
           value={recipients}
           onChange={e => setRecipients(e.target.value)}
         />
@@ -152,7 +152,7 @@ export function SendStage({ slideCount, onDone, onBack }: Props) {
           className="input"
           value={subject}
           onChange={e => setSubject(e.target.value)}
-          placeholder="台新信用卡市場分析報告"
+          placeholder="數據分析報告"
         />
       </div>
 
@@ -162,8 +162,8 @@ export function SendStage({ slideCount, onDone, onBack }: Props) {
         color: 'var(--text-light)', lineHeight: 1.7, marginBottom: '1.5rem',
       }}>
         <strong>附件內容：</strong><br />
-        · 台新信用卡分析報告.pptx（{slideCount} 頁，含原生圖表）<br />
-        · 台新信用卡分析報告_來源附件.xlsx（6 頁稽核工作簿）
+        · 數據分析報告.pptx（{slideCount} 頁，含原生圖表）<br />
+        · 數據分析報告_來源附件.xlsx（含圖表資料與來源追溯）
       </div>
 
       <div style={{ display: 'flex', gap: '0.8rem', justifyContent: 'flex-end' }}>

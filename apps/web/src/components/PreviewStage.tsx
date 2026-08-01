@@ -30,7 +30,7 @@ const ELEMENT_LABELS: Record<string, string> = {
   bullet_list: '要點列表',
   kpi_block: '關鍵指標',
   insight: 'AI 洞察',
-  comparison: '銀行比較',
+  comparison: '實體比較',
   source: '來源標註',
   table: '表格',
 };

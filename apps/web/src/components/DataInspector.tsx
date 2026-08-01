@@ -46,7 +46,7 @@ export function DataInspector({ slides, computeResult, onJumpToSlide }: Props) {
       <div className="card" style={{ padding: '0.9rem 1.2rem', marginBottom: '1rem' }}>
         <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', fontSize: '0.8rem' }}>
           <Stat label="工作表" value={computeResult.summary.sheetsUsed} />
-          <Stat label="銀行" value={computeResult.summary.totalEntities} />
+          <Stat label="實體" value={computeResult.summary.totalEntities} />
           <Stat label="期間" value={computeResult.summary.totalPeriods} />
           <Stat label="原始儲存格" value={computeResult.sourceRefs.length} />
           <Stat label="計算指標" value={computeResult.metrics.length} />
@@ -72,7 +72,7 @@ export function DataInspector({ slides, computeResult, onJumpToSlide }: Props) {
             <input
               className="input"
               style={{ width: 'auto', flex: '0 1 160px', padding: '0.4rem 0.6rem', fontSize: '0.8rem' }}
-              placeholder="篩選銀行"
+              placeholder="篩選實體"
               value={filter}
               onChange={e => setFilter(e.target.value)}
             />
@@ -91,7 +91,7 @@ export function DataInspector({ slides, computeResult, onJumpToSlide }: Props) {
                     background: 'var(--primary)', color: 'white',
                     padding: '0.4rem 0.6rem', textAlign: 'left', whiteSpace: 'nowrap',
                   }}>
-                    銀行
+                    實體
                   </th>
                   {table.periods.map(p => (
                     <th key={p} style={{

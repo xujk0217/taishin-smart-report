@@ -1,8 +1,11 @@
 /**
- * Companion evidence workbook.
+ * Companion evidence workbook with chart data sync.
  *
  * Ships alongside the PPTX so a reviewer can audit every number in the deck:
  * which cell it came from, which formula produced it, and which slide uses it.
+ *
+ * Key feature: each chart in the PPT has a corresponding data table in this
+ * workbook, making all chart data independently editable and traceable.
  */
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
@@ -25,7 +28,7 @@ export async function exportEvidenceWorkbook(
     ['產生時間', new Date().toLocaleString('zh-TW')],
     ['簡報頁數', slides.length],
     ['引用工作表數', result.summary.sheetsUsed],
-    ['銀行家數', result.summary.totalEntities],
+    ['實體數', result.summary.totalEntities],
     ['期間數', result.summary.totalPeriods],
     ['原始儲存格數', result.sourceRefs.length],
     ['計算指標數', result.metrics.length],
@@ -37,7 +40,7 @@ export async function exportEvidenceWorkbook(
 
   // ── 2. Source manifest ─────────────────────────────────────
   const sourceRows = [
-    ['SourceID', '檔案', '工作表', '儲存格', '銀行', '期間', '原始值', '解析數值'],
+    ['SourceID', '檔案', '工作表', '儲存格', '實體', '期間', '原始值', '解析數值'],
     ...result.sourceRefs.map(s => [
       s.sourceId, s.fileName, s.sheetName, s.cellAddress,
       s.entity, s.period, s.rawValue, s.value,
@@ -52,7 +55,7 @@ export async function exportEvidenceWorkbook(
 
   // ── 3. Metrics with formula and computation ────────────────
   const metricRows = [
-    ['MetricID', '指標名稱', '銀行', '期間', '數值', '單位', '排名', '總家數', '公式', '計算過程', '引用 SourceID'],
+    ['MetricID', '指標名稱', '實體', '期間', '數值', '單位', '排名', '總數', '公式', '計算過程', '引用 SourceID'],
     ...result.metrics.map(m => [
       m.metricId, m.metricName, m.entity, m.period, m.value, m.unit,
       m.rank ?? '', m.rankTotal ?? '', m.formula, m.computationStep,
@@ -67,11 +70,14 @@ export async function exportEvidenceWorkbook(
   XLSX.utils.book_append_sheet(wb, wsMetric, '指標計算');
 
   // ── 4. Chart data, one block per chart ─────────────────────
+  // Each chart gets its own structured data table for independent editing
   const chartRows: (string | number)[][] = [];
   for (const c of result.charts) {
-    chartRows.push([c.title]);
-    chartRows.push(['類型', c.type === 'bar' ? '柱狀圖' : '折線圖']);
-    chartRows.push(['期間/類別', ...c.categories]);
+    chartRows.push([`圖表：${c.title}`]);
+    const typeLabel = c.type === 'bar' ? '柱狀圖' : c.type === 'pie' ? '圓餅圖' : '折線圖';
+    chartRows.push(['類型', typeLabel]);
+    chartRows.push(['圖表ID', c.chartId]);
+    chartRows.push(['類別/期間', ...c.categories]);
     for (const s of c.series) {
       chartRows.push([s.name, ...s.data]);
     }

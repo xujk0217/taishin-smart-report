@@ -5,9 +5,9 @@ interface Props {
 }
 
 const PROCESSING_STEPS = [
-  { at: 0, label: '解析 Excel 工作表結構' },
-  { at: 20, label: '正規化資料與建立來源追蹤' },
-  { at: 40, label: '計算市占率、排名、月增率' },
+  { at: 0, label: '解析報表結構與欄位' },
+  { at: 20, label: '建立資料來源追蹤' },
+  { at: 40, label: '計算指標與排名' },
   { at: 60, label: 'AI 規劃簡報結構與內容' },
   { at: 80, label: '驗證數據一致性' },
   { at: 100, label: '產生簡報預覽' },
