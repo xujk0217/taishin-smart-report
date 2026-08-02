@@ -105,7 +105,7 @@ export class UiStack extends cdk.Stack {
     const responseHeaders = new cloudfront.ResponseHeadersPolicy(this, 'UiSecurityHeaders', {
       securityHeadersBehavior: {
         contentSecurityPolicy: {
-          contentSecurityPolicy: `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://${authDomain} https://*.execute-api.us-east-1.amazonaws.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self' https://${authDomain}`,
+          contentSecurityPolicy: `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://${authDomain} https://*.execute-api.${config.region}.amazonaws.com https://*.s3.${config.region}.amazonaws.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self' https://${authDomain}`,
           override: true,
         },
         strictTransportSecurity: {
@@ -141,7 +141,7 @@ export class UiStack extends cdk.Stack {
       logBucket: accessLogs,
       logFilePrefix: 'cloudfront/',
       webAclId: webAcl.attrArn,
-      comment: 'Real Excel and Prompt planner; calculation, rendering, and delivery remain mock.',
+      comment: 'Real Excel, prompt, calculation, and editable PPTX rendering service.',
     });
 
     this.userPool = new cognito.UserPool(this, 'UiUsers', {
@@ -240,8 +240,8 @@ export class UiStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'UserPoolClientId', { value: this.userPoolClient.userPoolClientId });
     new cdk.CfnOutput(this, 'CognitoDomain', { value: authDomain });
     new cdk.CfnOutput(this, 'PlannerApiUrl', { value: plannerApiUrl });
-    new cdk.CfnOutput(this, 'EnabledCapabilities', { value: 'cognito,upload,prompt,planner-api,fargate,bedrock,plan-review' });
-    new cdk.CfnOutput(this, 'DisabledCapabilities', { value: 'calculation-execution,research,renderer,artifacts,email' });
+    new cdk.CfnOutput(this, 'EnabledCapabilities', { value: 'cognito,upload,prompt,planner-api,fargate,bedrock,plan-review,calculation-codegen,calculation-execution,pptx-template-rendering' });
+    new cdk.CfnOutput(this, 'DisabledCapabilities', { value: 'research,artifact-storage,email' });
   }
 
   private addPlannerBackend(config: WorkshopCloudConfig, uiUrl: string): string {
@@ -249,7 +249,7 @@ export class UiStack extends cdk.Stack {
       encryption: s3.BucketEncryption.S3_MANAGED,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       enforceSSL: true,
-      lifecycleRules: [{ expiration: cdk.Duration.days(1), abortIncompleteMultipartUploadAfter: cdk.Duration.days(1) }],
+      lifecycleRules: [{ expiration: cdk.Duration.days(30), abortIncompleteMultipartUploadAfter: cdk.Duration.days(1) }],
       cors: [{ allowedOrigins: [uiUrl.replace(/\/$/, '')], allowedMethods: [s3.HttpMethods.POST], allowedHeaders: ['*'], maxAge: 900 }],
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
@@ -260,6 +260,12 @@ export class UiStack extends cdk.Stack {
       pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
       timeToLiveAttribute: 'expiresAt',
       removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+    table.addGlobalSecondaryIndex({
+      indexName: 'ownerSub-createdAt-index',
+      partitionKey: { name: 'ownerSub', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'createdAt', type: dynamodb.AttributeType.STRING },
+      projectionType: dynamodb.ProjectionType.ALL,
     });
     const vpc = new ec2.Vpc(this, 'PlannerVpc', {
       maxAzs: 2, natGateways: 0,
@@ -300,15 +306,27 @@ export class UiStack extends cdk.Stack {
       }),
       readonlyRootFilesystem: true,
       logging: ecs.LogDrivers.awsLogs({ logGroup, streamPrefix: 'planner' }),
-      environment: { PLANNER_TABLE: table.tableName, PLANNER_INPUT_BUCKET: inputBucket.bucketName, BEDROCK_MODEL_ID: 'us.anthropic.claude-sonnet-4-6', AWS_REGION: config.region },
+      environment: {
+        PLANNER_TABLE: table.tableName,
+        PLANNER_INPUT_BUCKET: inputBucket.bucketName,
+        BEDROCK_MODEL_ID: 'us.anthropic.claude-sonnet-4-6',
+        // requirements_and_formula and calculation stages use Opus for deeper
+        // reasoning on complex multi-metric analysis and formula derivation.
+        COMPLEX_BEDROCK_MODEL_ID: 'us.anthropic.claude-opus-4-6-v1',
+        // Calculation code generation also uses Opus as the fallback model
+        // for correctness-critical code generation.
+        CALCULATION_BEDROCK_MODEL_ID: 'us.anthropic.claude-opus-4-6-v1',
+        AWS_REGION: config.region,
+      },
     });
     container.addMountPoints({ sourceVolume: 'planner-tmp', containerPath: '/tmp', readOnly: false });
     table.grantReadWriteData(task.taskRole);
-    inputBucket.grantRead(task.taskRole);
+    inputBucket.grantReadWrite(task.taskRole);
     task.taskRole.addToPrincipalPolicy(new iam.PolicyStatement({
       actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
       resources: [
         `arn:aws:bedrock:${config.region}:${config.account}:inference-profile/us.anthropic.claude-sonnet-4-6`,
+        `arn:aws:bedrock:${config.region}:${config.account}:inference-profile/us.anthropic.claude-opus-4-6-v1`,
         'arn:aws:bedrock:*::foundation-model/anthropic.claude-*',
       ],
     }));
@@ -322,7 +340,9 @@ export class UiStack extends cdk.Stack {
         { name: 'PLANNER_OPERATION', value: sfn.JsonPath.stringAt('$.operation') },
       ] }],
     });
-    runTask.addRetry({ maxAttempts: 2, interval: cdk.Duration.seconds(10), backoffRate: 2 });
+    // Retrying an entire Fargate task can double an interactive run. Stage-level
+    // retries are handled by the worker and reported to the owner instead.
+    runTask.addRetry({ maxAttempts: 1, interval: cdk.Duration.seconds(5), backoffRate: 1 });
     const orchestrationFailed = new sfnTasks.DynamoUpdateItem(this, 'MarkPlannerOrchestrationFailed', {
       table,
       key: { jobId: sfnTasks.DynamoAttributeValue.fromString(sfn.JsonPath.stringAt('$.jobId')) },
@@ -342,7 +362,7 @@ export class UiStack extends cdk.Stack {
     runTask.addCatch(orchestrationFailed, { errors: [sfn.Errors.ALL], resultPath: '$.plannerError' });
     const stateMachine = new sfn.StateMachine(this, 'PlannerStateMachine', {
       definitionBody: sfn.DefinitionBody.fromChainable(runTask.next(new sfn.Succeed(this, 'PlannerComplete'))),
-      stateMachineType: sfn.StateMachineType.STANDARD, timeout: cdk.Duration.minutes(45),
+      stateMachineType: sfn.StateMachineType.STANDARD, timeout: cdk.Duration.seconds(420),
       logs: { destination: new logs.LogGroup(this, 'PlannerStateMachineLogs', { retention: logs.RetentionDays.THREE_MONTHS }), includeExecutionData: false, level: sfn.LogLevel.ERROR },
       tracingEnabled: true,
     });
@@ -356,6 +376,7 @@ export class UiStack extends cdk.Stack {
         PLANNER_STATE_MACHINE_ARN: stateMachine.stateMachineArn,
         PLANNER_CLUSTER_ARN: cluster.clusterArn,
         PLANNER_LOG_GROUP: logGroup.logGroupName,
+        PLANNER_OWNER_INDEX: 'ownerSub-createdAt-index',
         UI_ORIGIN: uiUrl.replace(/\/$/, ''),
       },
       bundling: { minify: true, sourceMap: false, target: 'node22' },
@@ -368,25 +389,87 @@ export class UiStack extends cdk.Stack {
       resources: ['*'],
     }));
     apiHandler.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['logs:DescribeLogStreams', 'logs:GetLogEvents'],
+      actions: ['logs:DescribeLogStreams', 'logs:GetLogEvents', 'logs:FilterLogEvents'],
       resources: [logGroup.logGroupArn, `${logGroup.logGroupArn}:*`],
     }));
+    const pptxRenderer = new lambda.Function(this, 'PptxRenderer', {
+      runtime: lambda.Runtime.PYTHON_3_11,
+      handler: 'render_pptx_lambda.handler',
+      code: lambda.Code.fromAsset(path.resolve(process.cwd(), '../../apps/web/api'), {
+        bundling: {
+          image: lambda.Runtime.PYTHON_3_11.bundlingImage,
+          command: ['bash', '-c', 'pip install --no-cache-dir -r requirements.txt -t /asset-output && cp -au . /asset-output'],
+        },
+      }),
+      timeout: cdk.Duration.seconds(29),
+      memorySize: 1536,
+      tracing: lambda.Tracing.PASS_THROUGH,
+      environment: {
+        UI_ORIGIN: uiUrl.replace(/\/$/, ''),
+        PLANNER_TABLE: table.tableName,
+        PLANNER_INPUT_BUCKET: inputBucket.bucketName,
+      },
+    });
+    table.grantReadData(pptxRenderer);
+    inputBucket.grantRead(pptxRenderer);
     const api = new apigateway.RestApi(this, 'PlannerApi', {
       endpointConfiguration: { types: [apigateway.EndpointType.REGIONAL] },
+      binaryMediaTypes: ['application/vnd.openxmlformats-officedocument.presentationml.presentation'],
       defaultCorsPreflightOptions: { allowOrigins: [uiUrl.replace(/\/$/, '')], allowMethods: ['GET', 'POST', 'PUT', 'OPTIONS'], allowHeaders: ['Content-Type', 'Authorization'] },
       deployOptions: { metricsEnabled: true, tracingEnabled: true, loggingLevel: apigateway.MethodLoggingLevel.ERROR, dataTraceEnabled: false, throttlingRateLimit: 10, throttlingBurstLimit: 20 },
     });
     const authorizer = new apigateway.CognitoUserPoolsAuthorizer(this, 'PlannerAuthorizer', { cognitoUserPools: [this.userPool] });
     const methodOptions = { authorizationType: apigateway.AuthorizationType.COGNITO, authorizer };
     const integration = new apigateway.LambdaIntegration(apiHandler);
-    const plans = api.root.addResource('v1').addResource('plans');
+    const v1 = api.root.addResource('v1');
+    const plans = v1.addResource('plans');
     plans.addMethod('POST', integration, methodOptions);
+    plans.addMethod('GET', integration, methodOptions);
     plans.addResource('uploads').addMethod('POST', integration, methodOptions);
     const plan = plans.addResource('{jobId}');
     plan.addMethod('GET', integration, methodOptions);
     plan.addMethod('PUT', integration, methodOptions);
+    plan.addResource('template').addResource('uploads').addMethod('POST', integration, methodOptions);
+    plan.addResource('retry').addMethod('POST', integration, methodOptions);
+    plan.addResource('calculations').addMethod('POST', integration, methodOptions);
     plan.addResource('revisions').addMethod('POST', integration, methodOptions);
     plan.addResource('approve').addMethod('POST', integration, methodOptions);
+    v1.addResource('pptx').addResource('render').addMethod('POST', new apigateway.LambdaIntegration(pptxRenderer), methodOptions);
+
+    // Gateway Responses (401/403/4xx/5xx) are emitted by API Gateway before the
+    // Lambda is invoked, so they don't inherit the CORS headers from the Lambda
+    // response. Without these, the browser blocks any error response (e.g. an
+    // expired Cognito token producing 401) as a CORS violation.
+    const corsOrigin = uiUrl.replace(/\/$/, '');
+    api.addGatewayResponse('Default4xx', {
+      type: apigateway.ResponseType.DEFAULT_4XX,
+      responseHeaders: {
+        'Access-Control-Allow-Origin': `'${corsOrigin}'`,
+        'Vary': "'Origin'",
+      },
+    });
+    api.addGatewayResponse('Default5xx', {
+      type: apigateway.ResponseType.DEFAULT_5XX,
+      responseHeaders: {
+        'Access-Control-Allow-Origin': `'${corsOrigin}'`,
+        'Vary': "'Origin'",
+      },
+    });
+    api.addGatewayResponse('Unauthorized', {
+      type: apigateway.ResponseType.UNAUTHORIZED,
+      responseHeaders: {
+        'Access-Control-Allow-Origin': `'${corsOrigin}'`,
+        'Vary': "'Origin'",
+      },
+    });
+    api.addGatewayResponse('AccessDenied', {
+      type: apigateway.ResponseType.ACCESS_DENIED,
+      responseHeaders: {
+        'Access-Control-Allow-Origin': `'${corsOrigin}'`,
+        'Vary': "'Origin'",
+      },
+    });
+
     return api.url;
   }
 }

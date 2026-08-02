@@ -22,7 +22,7 @@ function template(): Template {
 }
 
 describe('UI plus real planning stack', () => {
-  it('creates real upload and planning resources while later capabilities remain absent', () => {
+  it('creates real upload, planning, calculation, and PPTX rendering resources', () => {
     const output = template();
     output.resourceCountIs('AWS::CloudFront::Distribution', 1);
     output.resourceCountIs('AWS::WAFv2::WebACL', 1);
@@ -30,11 +30,20 @@ describe('UI plus real planning stack', () => {
     output.resourceCountIs('AWS::Cognito::UserPoolClient', 1);
     output.resourceCountIs('AWS::ApiGatewayV2::Api', 0);
     output.resourceCountIs('AWS::ApiGateway::RestApi', 1);
-    output.resourceCountIs('AWS::Lambda::Function', 3); // Planner API plus CDK deployment providers.
+    output.resourceCountIs('AWS::Lambda::Function', 4); // Planner API, PPTX renderer, plus CDK deployment providers.
     output.resourceCountIs('AWS::ECS::TaskDefinition', 1);
     output.resourceCountIs('AWS::ECS::Service', 0);
     output.resourceCountIs('AWS::StepFunctions::StateMachine', 1);
     output.resourceCountIs('AWS::DynamoDB::Table', 1);
+    output.hasResourceProperties('AWS::DynamoDB::Table', Match.objectLike({
+      GlobalSecondaryIndexes: Match.arrayWith([Match.objectLike({
+        IndexName: 'ownerSub-createdAt-index',
+        KeySchema: Match.arrayWith([
+          Match.objectLike({ AttributeName: 'ownerSub', KeyType: 'HASH' }),
+          Match.objectLike({ AttributeName: 'createdAt', KeyType: 'RANGE' }),
+        ]),
+      })]),
+    }));
     output.resourceCountIs('AWS::EC2::NatGateway', 0);
   });
 
@@ -55,7 +64,10 @@ describe('UI plus real planning stack', () => {
     output.hasResourceProperties('AWS::CloudFront::ResponseHeadersPolicy', Match.objectLike({
       ResponseHeadersPolicyConfig: Match.objectLike({
         SecurityHeadersConfig: Match.objectLike({
-          ContentSecurityPolicy: Match.objectLike({ Override: true }),
+          ContentSecurityPolicy: Match.objectLike({
+            ContentSecurityPolicy: Match.stringLikeRegexp("connect-src[^;]*https://\\*\\.s3\\.us-east-1\\.amazonaws\\.com"),
+            Override: true,
+          }),
           StrictTransportSecurity: Match.objectLike({ Override: true }),
         }),
       }),

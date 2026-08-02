@@ -378,6 +378,13 @@ class FormulaPlanningStageOutput(StrictModel):
     formula_plan: FormulaPlan
 
 
+class RequirementsAndFormulaStageOutput(StrictModel):
+    """Merged stage 1+2 output: prompt interpretation and formula definitions in one LLM call."""
+
+    prompt_contract: PromptContract
+    formula_plan: FormulaPlan
+
+
 class ChartCalculationLink(StrictModel):
     chart_id: str = Field(min_length=1)
     formula_ids: list[str]

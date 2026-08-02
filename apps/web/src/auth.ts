@@ -2,9 +2,19 @@ import { isCognitoConfigured, runtimeConfig } from './runtime-config';
 
 const VERIFIER_KEY = 'smart-report-pkce-verifier';
 const ID_TOKEN_KEY = 'smart-report-id-token';
+const REFRESH_TOKEN_KEY = 'smart-report-refresh-token';
+const TOKEN_EXPIRY_SKEW_SECONDS = 60;
+export const AUTH_SESSION_CLEARED_EVENT = 'smart-report-auth-session-cleared';
+
+let refreshPromise: Promise<string | null> | null = null;
 
 export interface DisplayIdentity {
   email: string;
+}
+
+interface IdTokenClaims {
+  email?: string;
+  exp?: number;
 }
 
 function base64Url(bytes: Uint8Array): string {
@@ -26,6 +36,31 @@ async function challengeFor(verifier: string): Promise<string> {
   return base64Url(new Uint8Array(digest));
 }
 
+function decodeClaims(token: string): IdTokenClaims | null {
+  try {
+    const payload = token.split('.')[1];
+    if (!payload) return null;
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+    return JSON.parse(atob(padded)) as IdTokenClaims;
+  } catch {
+    return null;
+  }
+}
+
+function tokenIsUsable(token: string): boolean {
+  const claims = decodeClaims(token);
+  return typeof claims?.exp === 'number'
+    && claims.exp > Math.floor(Date.now() / 1_000) + TOKEN_EXPIRY_SKEW_SECONDS;
+}
+
+export function clearAuthSession(): void {
+  sessionStorage.removeItem(ID_TOKEN_KEY);
+  sessionStorage.removeItem(REFRESH_TOKEN_KEY);
+  sessionStorage.removeItem(VERIFIER_KEY);
+  window.dispatchEvent(new Event(AUTH_SESSION_CLEARED_EVENT));
+}
+
 export async function beginSignIn(): Promise<void> {
   if (!isCognitoConfigured()) {
     throw new Error('Cognito is not configured in this environment.');
@@ -45,9 +80,9 @@ export async function beginSignIn(): Promise<void> {
 }
 
 export async function completeSignIn(): Promise<DisplayIdentity | null> {
-  const existing = sessionStorage.getItem(ID_TOKEN_KEY);
   const code = new URLSearchParams(window.location.search).get('code');
   if (!code || !isCognitoConfigured()) {
+    const existing = await getIdToken();
     return existing ? decodeIdentity(existing) : null;
   }
 
@@ -71,19 +106,20 @@ export async function completeSignIn(): Promise<DisplayIdentity | null> {
   if (!response.ok) {
     throw new Error('Cognito sign-in could not be completed.');
   }
-  const tokens = (await response.json()) as { id_token?: string };
+  const tokens = (await response.json()) as { id_token?: string; refresh_token?: string };
   if (!tokens.id_token) {
     throw new Error('Cognito did not return an identity token.');
   }
   sessionStorage.setItem(ID_TOKEN_KEY, tokens.id_token);
+  if (tokens.refresh_token) sessionStorage.setItem(REFRESH_TOKEN_KEY, tokens.refresh_token);
+  else sessionStorage.removeItem(REFRESH_TOKEN_KEY);
   sessionStorage.removeItem(VERIFIER_KEY);
   window.history.replaceState({}, document.title, window.location.pathname);
   return decodeIdentity(tokens.id_token);
 }
 
 export function signOut(): void {
-  sessionStorage.removeItem(ID_TOKEN_KEY);
-  sessionStorage.removeItem(VERIFIER_KEY);
+  clearAuthSession();
   if (isCognitoConfigured()) {
     const query = new URLSearchParams({
       client_id: runtimeConfig.userPoolClientId!,
@@ -95,17 +131,59 @@ export function signOut(): void {
   window.location.reload();
 }
 
-export function getIdToken(): string | null {
-  return sessionStorage.getItem(ID_TOKEN_KEY);
+export async function getIdToken(): Promise<string | null> {
+  const token = sessionStorage.getItem(ID_TOKEN_KEY);
+  if (token && tokenIsUsable(token)) return token;
+  const refreshToken = sessionStorage.getItem(REFRESH_TOKEN_KEY);
+  if (!token && !refreshToken) return null;
+  if (!refreshToken || !isCognitoConfigured()) {
+    clearAuthSession();
+    return null;
+  }
+  if (!refreshPromise) {
+    refreshPromise = refreshIdToken().finally(() => {
+      refreshPromise = null;
+    });
+  }
+  return refreshPromise;
+}
+
+async function refreshIdToken(): Promise<string | null> {
+  const refreshToken = sessionStorage.getItem(REFRESH_TOKEN_KEY);
+  if (!refreshToken || !isCognitoConfigured()) {
+    clearAuthSession();
+    return null;
+  }
+
+  try {
+    const body = new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: runtimeConfig.userPoolClientId!,
+      refresh_token: refreshToken,
+    });
+    const response = await fetch(`https://${runtimeConfig.cognitoDomain}/oauth2/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    });
+    if (!response.ok) {
+      clearAuthSession();
+      return null;
+    }
+    const tokens = (await response.json()) as { id_token?: string };
+    if (!tokens.id_token || !tokenIsUsable(tokens.id_token)) {
+      clearAuthSession();
+      return null;
+    }
+    sessionStorage.setItem(ID_TOKEN_KEY, tokens.id_token);
+    return tokens.id_token;
+  } catch {
+    clearAuthSession();
+    return null;
+  }
 }
 
 function decodeIdentity(token: string): DisplayIdentity {
-  try {
-    const payload = token.split('.')[1];
-    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
-    const claims = JSON.parse(atob(normalized)) as { email?: string };
-    return { email: claims.email ?? 'Cognito user' };
-  } catch {
-    return { email: 'Cognito user' };
-  }
+  const claims = decodeClaims(token);
+  return { email: claims?.email ?? 'Cognito user' };
 }
