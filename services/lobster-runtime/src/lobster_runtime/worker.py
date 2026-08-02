@@ -14,6 +14,7 @@ from typing import Any
 import boto3
 from botocore.config import Config
 from openpyxl import load_workbook
+from pptx import Presentation
 from strands.models import BedrockModel
 
 from .adapter import StageOutputTooLargeError, StrandsLobsterRuntimeAdapter
@@ -21,6 +22,7 @@ from .calculation import generate_and_execute
 from .contracts import AIPlanningOutput
 from .presentation_agent import AgentPresentationRuntime
 from .stage2_presentation_bridge import build_presentation_inputs
+from .universal_presentation_pipeline import UniversalPresentationPipeline
 
 MAX_PROFILE_SHEETS = 12
 MAX_PROFILE_ROWS = 4
@@ -454,8 +456,8 @@ def run_presentation(job_id: str) -> None:
         planning_output = AIPlanningOutput.model_validate_json(item["planningOutputJson"])
         bucket = required_env("PLANNER_INPUT_BUCKET")
         artifact_payload = _load_json_object(s3, bucket, item["calculationArtifactKey"])
-        blueprint, evidence = build_presentation_inputs(planning_output, artifact_payload)
         uploads = json.loads(item["uploadManifestJson"])
+        workbook_uploads = [upload for upload in uploads if upload.get("kind", "excel") == "excel"]
         template_upload = next((upload for upload in uploads if upload.get("kind") == "template"), None)
         model_id = os.environ.get(
             "PRESENTATION_BEDROCK_MODEL_ID",
@@ -463,66 +465,106 @@ def run_presentation(job_id: str) -> None:
         )
         model = BedrockModel(
             model_id=model_id, region_name=required_env("AWS_REGION"),
-            temperature=0.1, max_tokens=int(os.environ.get("PRESENTATION_BEDROCK_MAX_TOKENS", "16000")),
-            boto_client_config=Config(connect_timeout=8, read_timeout=180, retries={"total_max_attempts": 1, "mode": "standard"}),
+            temperature=0.1, max_tokens=int(os.environ.get("PRESENTATION_BEDROCK_MAX_TOKENS", "32000")),
+            boto_client_config=Config(
+                connect_timeout=8,
+                read_timeout=int(os.environ.get("PRESENTATION_BEDROCK_READ_TIMEOUT", "1200")),
+                retries={"total_max_attempts": 1, "mode": "standard"},
+            ),
         )
         with tempfile.TemporaryDirectory(prefix="presentation-") as directory:
+            workbook_paths = _download_workbooks_parallel(s3, bucket, workbook_uploads, directory) if workbook_uploads else {}
             template_path: Path | None = None
             if template_upload:
                 template_path = Path(directory) / "template.pptx"
                 s3.download_file(bucket, template_upload["objectKey"], str(template_path))
             output_dir = Path(directory) / "out"
             _emit(job_id, "presentation-render", "started")
-            result = AgentPresentationRuntime(model).generate(
-                prompt=item["prompt"],
-                blueprint=blueprint,
-                evidence=evidence,
-                output_dir=output_dir,
-                template_path=template_path,
-                file_stem="agent-rendered-presentation",
-                expected_slide_count=planning_output.deck_plan.total_pages,
-            )
+            if workbook_paths:
+                pipeline_manifest = UniversalPresentationPipeline(model).run(
+                    prompt=item["prompt"],
+                    upstream_context=_stage2_presentation_context(
+                        planning_output=planning_output,
+                        calculation_artifact=artifact_payload,
+                    ),
+                    data_paths=list(workbook_paths.values()),
+                    output_dir=output_dir,
+                    template_path=template_path,
+                    file_stem="agent-rendered-presentation",
+                    use_upstream_preanalysis=True,
+                )
+                validation_payload = _read_json_file(pipeline_manifest.validation_report_path)
+                renderer_source = _renderer_source_from_validation(validation_payload)
+                pptx_path = pipeline_manifest.pptx_path
+                xlsx_path = pipeline_manifest.xlsx_path
+                slide_count = _slide_count(pptx_path)
+                chart_count = int(validation_payload.get("manifest", {}).get("chart_count", 0))
+                table_count = int(validation_payload.get("manifest", {}).get("table_count", 0))
+                validation_status = str(validation_payload.get("validation_report", {}).get("status", pipeline_manifest.status))
+                findings = validation_payload.get("validation_report", {}).get("findings", [])
+                execution_id = str(validation_payload.get("execution_id") or f"presentation-agent-{_sha256(pptx_path)[:12]}")
+                sdk_version = str(validation_payload.get("sdk_version", "unknown"))
+            else:
+                blueprint, evidence = build_presentation_inputs(planning_output, artifact_payload)
+                result = AgentPresentationRuntime(model).generate(
+                    prompt=item["prompt"],
+                    blueprint=blueprint,
+                    evidence=evidence,
+                    output_dir=output_dir,
+                    template_path=template_path,
+                    file_stem="agent-rendered-presentation",
+                )
+                validation_payload = result.model_dump(mode="json")
+                renderer_source = result.renderer_program.source_code
+                pptx_path = result.manifest.pptx_path
+                xlsx_path = result.manifest.xlsx_path
+                slide_count = result.manifest.slide_count
+                chart_count = result.manifest.chart_count
+                table_count = result.manifest.table_count
+                validation_status = result.validation_report.status
+                findings = [finding.model_dump(mode="json") for finding in result.validation_report.findings]
+                execution_id = result.execution_id
+                sdk_version = result.sdk_version
             _emit(job_id, "presentation-render", "completed")
-            execution_id = result.execution_id
             base_key = f"plans/{job_id}/presentations/{execution_id}"
             pptx_key = f"{base_key}/deck.pptx"
             xlsx_key = f"{base_key}/data.xlsx"
             validation_key = f"{base_key}/validation.json"
             renderer_key = f"{base_key}/renderer.py"
-            s3.upload_file(result.manifest.pptx_path, bucket, pptx_key, ExtraArgs={
+            s3.upload_file(pptx_path, bucket, pptx_key, ExtraArgs={
                 "ContentType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
                 "ServerSideEncryption": "AES256",
             })
-            s3.upload_file(result.manifest.xlsx_path, bucket, xlsx_key, ExtraArgs={
+            s3.upload_file(xlsx_path, bucket, xlsx_key, ExtraArgs={
                 "ContentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 "ServerSideEncryption": "AES256",
             })
             s3.put_object(
                 Bucket=bucket, Key=validation_key,
-                Body=result.validation_report.model_dump_json().encode("utf-8"),
+                Body=json.dumps(validation_payload, ensure_ascii=False).encode("utf-8"),
                 ContentType="application/json", ServerSideEncryption="AES256",
             )
             s3.put_object(
                 Bucket=bucket, Key=renderer_key,
-                Body=result.renderer_program.source_code.encode("utf-8"),
+                Body=renderer_source.encode("utf-8"),
                 ContentType="text/x-python", ServerSideEncryption="AES256",
             )
         summary_json = json.dumps({
-            "executionId": result.execution_id,
+            "executionId": execution_id,
             "status": "succeeded",
-            "sdkVersion": result.sdk_version,
+            "sdkVersion": sdk_version,
             "modelId": model_id,
             "generatedAt": utc_now(),
             "deckKey": pptx_key,
             "dataWorkbookKey": xlsx_key,
             "validationKey": validation_key,
             "rendererCodeKey": renderer_key,
-            "rendererCodeSha256": _sha256(result.renderer_program.source_code),
-            "slideCount": result.manifest.slide_count,
-            "chartCount": result.manifest.chart_count,
-            "tableCount": result.manifest.table_count,
-            "validationStatus": result.validation_report.status,
-            "findings": [finding.model_dump(mode="json") for finding in result.validation_report.findings[:20]],
+            "rendererCodeSha256": _sha256(renderer_source),
+            "slideCount": slide_count,
+            "chartCount": chart_count,
+            "tableCount": table_count,
+            "validationStatus": validation_status,
+            "findings": findings[:20],
         }, ensure_ascii=False, separators=(",", ":"))
         now = utc_now()
         stored_bytes = ensure_storable_job_item(
@@ -593,6 +635,47 @@ def _load_json_object(s3: Any, bucket: str, key: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise RuntimeError("S3_JSON_OBJECT_EXPECTED")
     return value
+
+
+def _read_json_file(path: str | Path) -> dict[str, Any]:
+    value = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise RuntimeError("JSON_OBJECT_EXPECTED")
+    return value
+
+
+def _renderer_source_from_validation(payload: dict[str, Any]) -> str:
+    source = payload.get("renderer_program", {}).get("source_code")
+    return source if isinstance(source, str) else ""
+
+
+def _slide_count(path: str | Path) -> int:
+    return len(Presentation(str(path)).slides)
+
+
+def _stage2_presentation_context(
+    *,
+    planning_output: AIPlanningOutput,
+    calculation_artifact: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "source": "stage2-planner-aws",
+        "planning_output": planning_output.model_dump(mode="json"),
+        "calculation_artifact_summary": {
+            "execution_id": calculation_artifact.get("execution_id"),
+            "task_count": len(calculation_artifact.get("tasks", [])) if isinstance(calculation_artifact.get("tasks"), list) else 0,
+            "tasks": [
+                {
+                    "task_id": task.get("task_id"),
+                    "status": task.get("status"),
+                    "row_count": len(task.get("rows", [])) if isinstance(task.get("rows"), list) else 0,
+                    "sample_rows": task.get("rows", [])[:3] if isinstance(task.get("rows"), list) else [],
+                }
+                for task in calculation_artifact.get("tasks", [])[:12]
+                if isinstance(task, dict)
+            ],
+        },
+    }
 
 
 def _sha256(value: str) -> str:

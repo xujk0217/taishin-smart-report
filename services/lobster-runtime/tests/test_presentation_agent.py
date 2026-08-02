@@ -419,6 +419,41 @@ def test_context_can_preserve_template_sample_slides_for_editing(tmp_path) -> No
     )
 
 
+def test_deck_selects_named_template_layouts_and_fills_title_placeholder(tmp_path) -> None:
+    template = tmp_path / "named-template.pptx"
+    template_deck = Presentation()
+    template_deck.slide_layouts[1].name = "2_標題投影片"
+    template_deck.slide_layouts[2].name = "3_標題投影片"
+    template_deck.slide_layouts[3].name = "1_標題及內容"
+    template_deck.slide_layouts[4].name = "2_章節標題"
+    template_deck.save(template)
+    ctx = RenderingContext(
+        evidence=EvidencePacketV2.model_validate(evidence_payload()),
+        output_dir=tmp_path,
+        template_path=template,
+        file_stem="template-layouts",
+    )
+
+    deck = Deck.from_context(ctx)
+    content_slide = deck.add_slide("content")
+    content_shape_count = len(content_slide.slide.shapes)
+    content_slide.add_title("內容標題")
+    section_slide = deck.add_slide("section")
+    section_shape_count = len(section_slide.slide.shapes)
+    section_slide.add_title("章節標題")
+    manifest = deck.save()
+    presentation = Presentation(manifest.pptx_path)
+
+    assert presentation.slides[0].slide_layout.name == "1_標題及內容"
+    assert presentation.slides[1].slide_layout.name == "2_章節標題"
+    assert len(presentation.slides[0].shapes) == content_shape_count
+    assert len(presentation.slides[1].shapes) == section_shape_count
+    assert any(
+        getattr(shape, "has_text_frame", False) and "內容標題" in shape.text_frame.text
+        for shape in presentation.slides[0].shapes
+    )
+
+
 def test_deck_tolerates_common_agent_aliases_and_ref_keywords(tmp_path) -> None:
     ctx = RenderingContext(
         evidence=EvidencePacketV2.model_validate(evidence_payload()),
@@ -536,6 +571,25 @@ def render(ctx):
     validate_renderer_source(source)
 
 
+def test_renderer_guard_rejects_deck_wrapper_internals() -> None:
+    with pytest.raises(ValueError, match="private attributes"):
+        validate_renderer_source(
+            "from lobster_runtime.smart_report_pptx import Deck\n"
+            "def render(ctx):\n"
+            " deck = Deck.from_context(ctx)\n"
+            " slide = deck.add_slide()\n"
+            " return slide._slide\n"
+        )
+    with pytest.raises(ValueError, match="wrapper internals"):
+        validate_renderer_source(
+            "from lobster_runtime.smart_report_pptx import Deck\n"
+            "def render(ctx):\n"
+            " deck = Deck.from_context(ctx)\n"
+            " slide = deck.add_slide()\n"
+            " return slide.slide\n"
+        )
+
+
 def test_full_universal_pipeline_reaches_artifacts_with_agent_stages(tmp_path) -> None:
     workbook_path = tmp_path / "demo.xlsx"
     workbook = Workbook()
@@ -546,9 +600,12 @@ def test_full_universal_pipeline_reaches_artifacts_with_agent_stages(tmp_path) -
     sheet.append(["中區", 350000])
     sheet.append(["南區", 300000])
     workbook.save(workbook_path)
+    stage_context = {"source": "stage2-planner-aws", "calculation_artifact_summary": {"task_count": 1}}
+    seen_contexts: dict[str, Any] = {}
 
     class ScriptedUniversalPipeline(UniversalPresentationPipeline):
         def _run_stage(self, stage_name, output_model, system_prompt, context):  # type: ignore[no-untyped-def]
+            seen_contexts[stage_name] = context.get("upstream_context")
             if output_model is DataIntelligenceReport:
                 return DataIntelligenceReport(
                     status="passed",
@@ -642,9 +699,123 @@ def test_full_universal_pipeline_reaches_artifacts_with_agent_stages(tmp_path) -
         prompt="產生一份區域營收簡報",
         data_paths=[workbook_path],
         output_dir=tmp_path,
+        upstream_context=stage_context,
     )
 
     assert manifest.status == "final"
     assert manifest.data_report.status == "passed"
     assert manifest.feasibility_plan.accepted_analyses
     assert manifest.pptx_path.endswith(".pptx")
+    assert seen_contexts["data-intelligence"] == stage_context
+    assert seen_contexts["analysis-feasibility"] == stage_context
+    assert seen_contexts["evidence-discovery"] == stage_context
+    assert seen_contexts["verified-analysis"] == stage_context
+    assert seen_contexts["presentation-design"] == stage_context
+
+
+def test_universal_pipeline_can_reuse_stage2_preanalysis(tmp_path) -> None:
+    workbook_path = tmp_path / "demo.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Region"
+    sheet.append(["區域", "營收"])
+    sheet.append(["北區", 600000])
+    workbook.save(workbook_path)
+    stage_context = {
+        "source": "stage2-planner-aws",
+        "planning_output": {
+            "prompt_contract": {
+                "data_requirements": ["Region revenue table"],
+                "assumptions": [],
+                "charts": [{
+                    "chart_id": "chart_1_營收",
+                    "title": "區域營收",
+                    "purpose": "Compare revenue by region.",
+                    "data_requirements": ["區域", "營收"],
+                    "rationale": "Approved by Stage2.",
+                    "visualization": "column chart",
+                }],
+                "insights": [],
+            },
+        },
+    }
+    called_stages: list[str] = []
+
+    class ScriptedUniversalPipeline(UniversalPresentationPipeline):
+        def _run_stage(self, stage_name, output_model, system_prompt, context):  # type: ignore[no-untyped-def]
+            called_stages.append(stage_name)
+            if output_model is EvidencePacketV2:
+                return EvidencePacketV2.model_validate({
+                    "packet_id": "agent-evidence-test",
+                    "metrics": [{
+                        "metric_id": "metric_1_營收",
+                        "label": "營收",
+                        "value": 600000,
+                        "unit": "元",
+                        "display_format": "currency",
+                        "source_refs": ["demo.xlsx#Region!營收"],
+                        "calculation": "Stage2-supported revenue summary",
+                    }],
+                    "charts": [{
+                        "chart_id": "chart_1_營收",
+                        "title": "區域營收",
+                        "chart_type": "column",
+                        "categories": ["北區"],
+                        "series": [{"name": "營收", "values": [600000]}],
+                        "metric_refs": ["metric_1_營收"],
+                    }],
+                    "claims": [{
+                        "claim_id": "claim_1_summary",
+                        "text": "本期營收為 {{metric_1_營收}}。",
+                        "metric_refs": ["metric_1_營收"],
+                        "chart_refs": ["chart_1_營收"],
+                        "source_refs": ["demo.xlsx#Region"],
+                    }],
+                    "tables": [{
+                        "table_id": "table_1_營收",
+                        "title": "區域營收表",
+                        "headers": ["區域", "營收"],
+                        "rows": [["北區", 600000]],
+                        "source_refs": ["demo.xlsx#Region"],
+                    }],
+                })
+            if output_model is VerifiedAnalysisNarrative:
+                return VerifiedAnalysisNarrative(
+                    status="passed",
+                    insight_summaries=["Use the Stage2-supported evidence packet."],
+                    caveats=[],
+                    evidence_usage_notes=["Claims and charts must reference evidence IDs."],
+                )
+            if output_model is BlueprintStageOutput:
+                return BlueprintStageOutput(
+                    status="passed",
+                    blueprint={
+                        "blueprint_version": "presentation-blueprint-v1",
+                        "title": "營運表現摘要",
+                        "slides": [{
+                            "slide_id": "s1",
+                            "role": "cover",
+                            "intent": "Summarize evidence-backed result.",
+                            "layout_strategy": "claim led title slide",
+                            "elements": [
+                                {"element_id": "e1", "type": "title", "box": {"x": 0.7, "y": 0.7, "w": 10.5, "h": 0.8}, "text": "營運表現摘要"},
+                                {"element_id": "e2", "type": "claim", "box": {"x": 0.9, "y": 1.8, "w": 7.5, "h": 1.2}, "claim_ref": "claim_1_summary"},
+                            ],
+                        }],
+                    },
+                    design_notes=["Use template if present."],
+                )
+            raise AssertionError(f"unexpected stage model: {output_model}")
+
+    manifest = ScriptedUniversalPipeline(ScriptedRendererModel(source=PIPELINE_RENDERER_SOURCE)).run(
+        prompt="產生一份區域營收簡報",
+        data_paths=[workbook_path],
+        output_dir=tmp_path,
+        upstream_context=stage_context,
+        use_upstream_preanalysis=True,
+    )
+
+    assert manifest.status == "final"
+    assert "data-intelligence" not in called_stages
+    assert "analysis-feasibility" not in called_stages
+    assert called_stages == ["evidence-discovery", "verified-analysis", "presentation-design"]

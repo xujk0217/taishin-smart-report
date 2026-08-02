@@ -10,6 +10,7 @@ from openpyxl import Workbook
 from pptx import Presentation
 from pptx.chart.data import CategoryChartData
 from pptx.enum.chart import XL_CHART_TYPE
+from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Pt
 
 from .presentation_contracts import (
@@ -179,11 +180,22 @@ class Deck:
         """Compatibility hook: templates are applied when Deck is constructed."""
         return self
 
-    def add_slide(self, role: str = "content", layout_index: int | None = None) -> "Slide":
+    def add_slide(
+        self,
+        role: str = "content",
+        layout_index: int | None = None,
+        *,
+        layout_name: str | None = None,
+        **_: Any,
+    ) -> "Slide":
         layouts = self.presentation.slide_layouts
-        index = layout_index if layout_index is not None else self._layout_for_role(role, len(layouts))
+        index = (
+            layout_index
+            if layout_index is not None
+            else self._layout_for_role(layouts, role, layout_name=layout_name)
+        )
         index = max(0, min(index, len(layouts) - 1))
-        return Slide(self, self.presentation.slides.add_slide(layouts[index]))
+        return Slide(self, self.presentation.slides.add_slide(layouts[index]), role=role)
 
     def save(self) -> RenderArtifactManifest:
         if not self.workbook.sheetnames:
@@ -198,31 +210,64 @@ class Deck:
             evidence_refs_used=self._evidence_refs_used,
         )
 
-    @staticmethod
-    def _layout_for_role(role: str, count: int) -> int:
+    @classmethod
+    def _layout_for_role(cls, layouts: Any, role: str, *, layout_name: str | None = None) -> int:
+        count = len(layouts)
         if count <= 1:
             return 0
+        if layout_name:
+            exact = cls._find_layout(layouts, equals=[layout_name])
+            if exact is not None:
+                return exact
         if role in {"cover", "section", "back-cover"}:
+            preferred = {
+                "cover": [["2_", "標題投影片"], ["cover"], ["title"]],
+                "section": [["章節"], ["section"]],
+                "back-cover": [["3_", "標題投影片"], ["back"], ["closing"]],
+            }[role]
+            found = cls._find_layout(layouts, contains_all=preferred)
+            if found is not None:
+                return found
             return 0
+        found = cls._find_layout(layouts, contains_all=[["標題", "內容"], ["title", "content"]])
+        if found is not None:
+            return found
         return min(1, count - 1)
+
+    @staticmethod
+    def _find_layout(
+        layouts: Any,
+        *,
+        equals: list[str] | None = None,
+        contains_all: list[list[str]] | None = None,
+    ) -> int | None:
+        equals_normalized = {_normalize_layout_name(value) for value in equals or []}
+        for index, layout in enumerate(layouts):
+            name = _normalize_layout_name(getattr(layout, "name", ""))
+            if name in equals_normalized:
+                return index
+        for keywords in contains_all or []:
+            normalized_keywords = [_normalize_layout_name(value) for value in keywords]
+            for index, layout in enumerate(layouts):
+                name = _normalize_layout_name(getattr(layout, "name", ""))
+                if all(keyword in name for keyword in normalized_keywords):
+                    return index
+        return None
 
 
 class Slide:
-    def __init__(self, deck: Deck, slide: Any) -> None:
+    def __init__(self, deck: Deck, slide: Any, *, role: str = "content") -> None:
         self.deck = deck
         self.slide = slide
+        self.role = role
 
     def add_title(self, content: str | None = None, *, text: str | None = None, box: Any = None, **_: Any) -> None:
         rendered_text = _coalesce_text(content, text)
         _reject_untraced_content_numbers(rendered_text)
-        shape = self.slide.shapes.add_textbox(*_box(box))
-        frame = shape.text_frame
-        frame.clear()
-        paragraph = frame.paragraphs[0]
-        run = paragraph.add_run()
-        run.text = rendered_text
-        run.font.size = Pt(24)
-        run.font.bold = True
+        shape = self._template_text_shape("title")
+        if shape is None:
+            shape = self.slide.shapes.add_textbox(*_box(box))
+        _write_text(shape.text_frame, rendered_text, size=24, bold=True, alignment=PP_ALIGN.CENTER if self.role in {"cover", "section", "back-cover"} else PP_ALIGN.LEFT)
 
     def add_subtitle(self, content: str | None = None, *, text: str | None = None, box: Any = None, **kwargs: Any) -> None:
         self.add_free_text(content, text=text, box=box, **kwargs)
@@ -231,11 +276,7 @@ class Slide:
         rendered_text = _coalesce_text(content, text)
         _reject_untraced_content_numbers(rendered_text)
         shape = self.slide.shapes.add_textbox(*_box(box))
-        frame = shape.text_frame
-        frame.clear()
-        paragraph = frame.paragraphs[0]
-        paragraph.text = rendered_text
-        paragraph.font.size = Pt(13)
+        _write_text(shape.text_frame, rendered_text, size=13)
 
     def add_text(self, content: str | None = None, *, text: str | None = None, box: Any = None, **kwargs: Any) -> None:
         self.add_free_text(content, text=text, box=box, **kwargs)
@@ -250,7 +291,9 @@ class Slide:
             bullet_items = list(items or [])
         for item in bullet_items:
             _reject_untraced_content_numbers(item)
-        shape = self.slide.shapes.add_textbox(*_box(box))
+        shape = self._template_text_shape("body") if box is None else None
+        if shape is None:
+            shape = self.slide.shapes.add_textbox(*_box(box))
         frame = shape.text_frame
         frame.clear()
         for index, item in enumerate(bullet_items or [""]):
@@ -277,10 +320,7 @@ class Slide:
         self.deck._evidence_refs_used.add(claim.claim_id)
         self.deck._evidence_refs_used.update(claim.metric_refs)
         shape = self.slide.shapes.add_textbox(*_box(box))
-        frame = shape.text_frame
-        frame.clear()
-        frame.paragraphs[0].text = _render_claim_text(claim, self.deck.ctx.metrics)
-        frame.paragraphs[0].font.size = Pt(14)
+        _write_text(shape.text_frame, _render_claim_text(claim, self.deck.ctx.metrics), size=14)
 
     def add_table(self, table_ref: str | None = None, *, id: str | None = None, ref: str | None = None, box: Any = None, **_: Any) -> None:
         table = self._table(_coalesce_ref(table_ref, id, ref, label="table_ref"))
@@ -338,10 +378,46 @@ class Slide:
         except KeyError as error:
             raise ValueError(f"unknown table_ref: {table_ref}") from error
 
+    def _template_text_shape(self, kind: str) -> Any | None:
+        candidates: list[tuple[int, float, Any]] = []
+        for shape in self.slide.shapes:
+            if not getattr(shape, "has_text_frame", False):
+                continue
+            name = _normalize_layout_name(getattr(shape, "name", ""))
+            if any(token in name for token in ("編號", "頁碼", "footer", "date")):
+                continue
+            top = float(shape.top) / 914400
+            left = float(shape.left) / 914400
+            area = float(shape.width * shape.height)
+            if kind == "title" and ("標題" in name or "title" in name):
+                candidates.append((0, top + left / 100, shape))
+            elif kind == "body" and any(token in name for token in ("內容", "文字", "content", "body")):
+                candidates.append((0, -area, shape))
+        if candidates:
+            candidates.sort(key=lambda item: (item[0], item[1]))
+            return candidates[0][2]
+        return None
+
 
 def _box(box: Any) -> tuple[Any, Any, Any, Any]:
     x, y, w, h = _coerce_box_values(box)
     return Inches(x), Inches(y), Inches(w), Inches(h)
+
+
+def _normalize_layout_name(value: str) -> str:
+    return str(value).strip().lower().replace(" ", "")
+
+
+def _write_text(frame: Any, text: str, *, size: int, bold: bool = False, alignment: Any | None = None) -> None:
+    frame.clear()
+    frame.word_wrap = True
+    paragraph = frame.paragraphs[0]
+    if alignment is not None:
+        paragraph.alignment = alignment
+    run = paragraph.add_run()
+    run.text = text
+    run.font.size = Pt(size)
+    run.font.bold = bold
 
 
 def _coerce_box_values(box: Any) -> tuple[float, float, float, float]:

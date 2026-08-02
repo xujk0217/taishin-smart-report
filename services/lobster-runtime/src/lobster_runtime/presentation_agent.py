@@ -35,15 +35,29 @@ PRESENTATION_RENDERER_PROMPT = """
 You are the presentation rendering agent. Generate Python code that creates a native editable PPTX and
 the synchronized XLSX data workbook for the approved presentation blueprint.
 
-Prefer native python-pptx code for layout and styling. If a template is uploaded, call
-ctx.new_presentation(preserve_template_slides=True) so the template's editable sample slides, title
-placeholders, bullet placeholders, colors, and layout objects remain available. Reuse and modify those
-existing shapes first, then add slides/shapes only as needed. If no useful template shapes exist, use
-ctx.new_presentation().
+Prefer the controlled Deck wrapper for reliable template-aware text, metric, chart, and table rendering;
+it uses python-pptx internally and produces editable PowerPoint objects. Deck.add_slide(...) chooses the
+closest uploaded template layout by role, and slide.add_title(...) fills an existing template title text
+frame when one exists. Use native python-pptx directly only when you need a capability the Deck wrapper
+does not expose.
 
-Use ctx.new_workbook() for the synchronized data workbook. Finish with ctx.save_artifacts(presentation,
-workbook, chart_count=..., table_count=..., evidence_refs_used=[...]). The older Deck wrapper is also
-available, but native python-pptx is preferred.
+When using Deck, finish with deck.save(). When using native python-pptx directly, use ctx.new_workbook()
+for the synchronized data workbook and finish with ctx.save_artifacts(presentation, workbook,
+chart_count=..., table_count=..., evidence_refs_used=[...]).
+
+Deck public API only:
+- deck = Deck.from_context(ctx)
+- slide = deck.add_slide(role="cover" | "content" | "section" | "appendix" | "back-cover", layout_name="optional exact template layout name")
+- slide.add_title(text, box=(x, y, w, h))
+- slide.add_subtitle(text, box=(x, y, w, h))
+- slide.add_free_text(text, box=(x, y, w, h))
+- slide.add_text(text, box=(x, y, w, h))
+- slide.add_bullet_list(items=[...], box=(x, y, w, h))
+- slide.add_metric_card(metric_ref="...", box=(x, y, w, h))
+- slide.add_claim(claim_ref="...", box=(x, y, w, h))
+- slide.add_chart(chart_ref="...", box=(x, y, w, h))
+- slide.add_table(table_ref="...", box=(x, y, w, h))
+- return deck.save()
 
 Allowed imports include:
 - from pptx import Presentation
@@ -62,11 +76,39 @@ Hard rules:
 - Do not calculate business metrics or create new evidence. Use only ctx.metrics, ctx.charts, ctx.claims, ctx.tables.
 - Do not hard-code material content numbers in visible text. Render numbers through ctx.metrics/ctx.claims or charts/tables.
 - Preserve the approved slide count and follow the blueprint intent.
+- Do not use slide.shapes.title. Some layouts have no title placeholder and this causes NoneType errors.
+  Use slide.shapes.add_textbox(...) for titles, or iterate over existing shapes and check has_text_frame.
+- Do not read or assign any object's .title attribute. Use explicit strings from the blueprint/evidence,
+  dictionary lookups like chart["title"], or slide.add_title(...) on the Deck wrapper.
+- Do not index slide.placeholders or assume any placeholder exists. Do not manage template placeholders yourself;
+  use deck.add_slide(...) and slide.add_title(...) so the wrapper fills suitable template text frames.
+- Do not use private attributes or wrapper internals: no ._slide, ._element, .slide, .presentation, or .workbook.
+  With the Deck wrapper, only call the public methods listed above.
 - For charts, create native editable PowerPoint charts with CategoryChartData and slide.shapes.add_chart(...).
   Do not draw chart-like graphics with rectangles, lines, screenshots, or pictures. Mirror every chart/table's
   underlying data into the output workbook.
-- When using template slides, it is OK to use existing placeholder text frames if present. Guard each placeholder
-  access with checks; if a placeholder or title is None, fall back to slide.shapes.add_textbox(...).
+
+Preferred safe pattern:
+from lobster_runtime.smart_report_pptx import Deck
+def render(ctx):
+    deck = Deck.from_context(ctx)
+    slide = deck.add_slide(role="cover")
+    slide.add_title("Approved title", box=(0.7, 0.7, 10.8, 0.8))
+    slide.add_claim(claim_ref="claim_slide_1", box=(0.9, 1.8, 8.5, 1.0))
+    return deck.save()
+
+Native fallback pattern:
+def put_text(slide, text, left, top, width, height):
+    box = slide.shapes.add_textbox(left, top, width, height)
+    box.text_frame.text = text
+    return box
+
+Forbidden patterns:
+- slide.shapes.title.text = ...
+- title_shape = slide.shapes.title; title_shape.text = ...
+- layout.title, shape.title, placeholder.title, or any_object.title
+- slide.placeholders[0] or slide.placeholders[1]
+- slide._slide, slide.slide, deck.presentation, deck.workbook, or any private/internal attribute
 """.strip()
 
 
@@ -227,7 +269,20 @@ def _format_renderer_error(error: Exception, source_code: str) -> str:
             excerpt = "\n".join(f"{line_no}: {lines[line_no - 1]}" for line_no in range(start, end + 1))
             generated_line = f"\nGenerated code around failing line:\n{excerpt}"
             break
-    return f"{type(error).__name__}: {error}{generated_line}"
+    message = f"{type(error).__name__}: {error}{generated_line}"
+    if "title" in message and ("NoneType" in message or "not allowed" in message):
+        message += (
+            "\nCorrection rule: remove every .title attribute access. Use Deck.add_title(...) "
+            "or slide.shapes.add_textbox(...). Do not use slide.shapes.title, layout.title, "
+            "shape.title, placeholder.title, or slide.placeholders[index]."
+        )
+    if "_slide" in message or "private attributes" in message or "wrapper internals" in message:
+        message += (
+            "\nCorrection rule: do not access Deck wrapper internals like slide._slide, slide.slide, "
+            "deck.presentation, or deck.workbook. Use only Deck.from_context(ctx), deck.add_slide(...), "
+            "slide.add_title/add_text/add_claim/add_metric_card/add_chart/add_table, and deck.save()."
+        )
+    return message
 
 
 def _with_blueprint_checks(

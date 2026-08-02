@@ -33,6 +33,8 @@ StageOutput = TypeVar("StageOutput", bound=BaseModel)
 DATA_STAGE_PROMPT = """
 You are stage 1: data intelligence. Interpret the actual workbook profiles only.
 Do not calculate new numbers and do not write presentation conclusions. Return DataIntelligenceReport.
+If upstream_context is present, use it only as orientation; workbook_profiles remain the source of truth
+for describing file structure.
 Mark blocked only when the data cannot support any presentation work.
 """.strip()
 
@@ -40,6 +42,8 @@ FEASIBILITY_STAGE_PROMPT = """
 You are stage 2: analysis feasibility. Use the user prompt, data report, and workbook profiles to decide
 which analyses are worthwhile and feasible. Do not invent results or calculate values. Return AnalysisFeasibilityPlan.
 Accept only analyses that can be reproduced by deterministic tools from the visible data profile.
+If upstream_context contains a stage2 planning output, treat its accepted analyses and calculation tasks as
+authoritative hints unless they conflict with the workbook profiles.
 """.strip()
 
 VERIFIED_ANALYSIS_STAGE_PROMPT = """
@@ -55,6 +59,9 @@ Create evidence that is useful for charts, tables, claims, and metrics. Use the 
 column names, examples, numeric summaries, and source references only. Do not invent source files or unsupported
 columns. Every metric, chart, table, and claim must include traceable source_refs or metric/chart refs where
 applicable. Prefer evidence that supports trends, anomalies, comparisons, and recommended actions.
+If upstream_context contains Stage2 planning/calculation artifacts, use them as the preferred source for
+business metrics, formulas, and calculated results. You may add additional evidence only when it is traceable
+to workbook profiles and does not contradict Stage2 calculations.
 """.strip()
 
 BLUEPRINT_STAGE_PROMPT = """
@@ -62,10 +69,17 @@ You are stage 4: template binding and presentation design. Create a flexible Pre
 BlueprintStageOutput. Use the template profile and evidence catalog. You may freely choose slide structure,
 element positions, chart/text/table balance, and story flow, but every chart/table/claim/metric element must
 reference an existing ID from the evidence catalog. Do not write material content numbers in free text.
-Do not impose a slide-count cap unless the user explicitly requested one. If no count is requested, choose the
-natural length for a complete management report, usually 10 to 14 slides. Cover executive summary, data scope,
-method/evidence caveats, key trends, anomalies, institution/category comparison, implications, recommended
-actions, and appendix/detail slides as needed.
+Do not impose a rigid slide-count cap unless the user explicitly requested one. If the user asks for
+"十多頁", "十幾頁", or a similar teen-page deck, interpret that as 10 to 19 slides. If no count is requested,
+choose the natural length for a complete management report, usually 10 to 14 slides. Avoid 20+ slide decks
+unless the user explicitly requests a long appendix pack. Cover executive summary, data scope, method/evidence
+caveats, key trends, anomalies, institution/category comparison, implications, recommended actions, and only
+the appendix/detail slides that materially improve the report.
+If upstream_context contains a Stage2 deck plan, preserve its intent and approved analysis direction, but bind
+it to the uploaded template layouts and improve slide rhythm where the evidence catalog supports it.
+Keep the structured output compact: each slide should usually have 2 to 5 elements, intent and layout_strategy
+should be concise, and design_notes should contain no more than 8 short bullets. Do not include long prose,
+full data tables, or repeated evidence explanations in the blueprint.
 """.strip()
 
 
@@ -81,6 +95,8 @@ class UniversalPresentationPipeline:
         output_dir: str | Path,
         template_path: str | Path | None = None,
         file_stem: str = "universal-agent-presentation",
+        upstream_context: dict[str, Any] | None = None,
+        use_upstream_preanalysis: bool = False,
     ) -> FullPipelineManifest:
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
@@ -88,25 +104,35 @@ class UniversalPresentationPipeline:
         _log("Profiling Excel workbooks")
         profiles = profile_excel_files(data_paths)
         profile_payload = [profile.model_dump(mode="json") for profile in profiles]
-        data_report = self._run_stage(
-            "data-intelligence",
-            DataIntelligenceReport,
-            DATA_STAGE_PROMPT,
-            {"user_prompt": prompt, "workbook_profiles": profile_payload},
-        )
-        self._ensure_not_blocked(data_report.status, "data-intelligence")
+        if use_upstream_preanalysis and upstream_context:
+            _log("Using Stage2 upstream context for data intelligence and feasibility")
+            data_report = _data_report_from_upstream_context(upstream_context, profile_payload)
+            feasibility_plan = _feasibility_plan_from_upstream_context(upstream_context)
+        else:
+            data_report = self._run_stage(
+                "data-intelligence",
+                DataIntelligenceReport,
+                DATA_STAGE_PROMPT,
+                {
+                    "user_prompt": prompt,
+                    "workbook_profiles": profile_payload,
+                    "upstream_context": upstream_context or {},
+                },
+            )
+            self._ensure_not_blocked(data_report.status, "data-intelligence")
 
-        _log("Building analysis feasibility plan")
-        feasibility_plan = self._run_stage(
-            "analysis-feasibility",
-            AnalysisFeasibilityPlan,
-            FEASIBILITY_STAGE_PROMPT,
-            {
-                "user_prompt": prompt,
-                "data_report": data_report.model_dump(mode="json"),
-                "workbook_profiles": profile_payload,
-            },
-        )
+            _log("Building analysis feasibility plan")
+            feasibility_plan = self._run_stage(
+                "analysis-feasibility",
+                AnalysisFeasibilityPlan,
+                FEASIBILITY_STAGE_PROMPT,
+                {
+                    "user_prompt": prompt,
+                    "data_report": data_report.model_dump(mode="json"),
+                    "workbook_profiles": profile_payload,
+                    "upstream_context": upstream_context or {},
+                },
+            )
         self._ensure_not_blocked(feasibility_plan.status, "analysis-feasibility")
 
         _log("Discovering evidence with agent")
@@ -115,6 +141,7 @@ class UniversalPresentationPipeline:
             data_report=data_report,
             feasibility_plan=feasibility_plan,
             profile_payload=profile_payload,
+            upstream_context=upstream_context or {},
         )
         evidence_path = output_path / f"{file_stem}.evidence.json"
         evidence_path.write_text(evidence.model_dump_json(indent=2), encoding="utf-8")
@@ -128,6 +155,7 @@ class UniversalPresentationPipeline:
                 "user_prompt": prompt,
                 "feasibility_plan": feasibility_plan.model_dump(mode="json"),
                 "evidence_catalog": _compact_evidence_catalog(evidence),
+                "upstream_context": upstream_context or {},
             },
         )
         self._ensure_not_blocked(verified_narrative.status, "verified-analysis")
@@ -142,6 +170,7 @@ class UniversalPresentationPipeline:
             verified_narrative=verified_narrative,
             evidence=evidence,
             template_profile=template_profile.model_dump(mode="json"),
+            upstream_context=upstream_context or {},
         )
         self._ensure_not_blocked(blueprint_output.status, "presentation-design")
         blueprint_path = output_path / f"{file_stem}.blueprint.json"
@@ -183,6 +212,7 @@ class UniversalPresentationPipeline:
         verified_narrative: VerifiedAnalysisNarrative,
         evidence: EvidencePacketV2,
         template_profile: dict[str, Any],
+        upstream_context: dict[str, Any],
     ) -> BlueprintStageOutput:
         validation_error = ""
         for _ in range(2):
@@ -192,11 +222,12 @@ class UniversalPresentationPipeline:
                 BLUEPRINT_STAGE_PROMPT,
                 {
                     "user_prompt": prompt,
-                    "data_report": data_report.model_dump(mode="json"),
-                    "feasibility_plan": feasibility_plan.model_dump(mode="json"),
-                    "verified_narrative": verified_narrative.model_dump(mode="json"),
+                    "data_report": _compact_data_report(data_report),
+                    "feasibility_plan": _compact_feasibility_plan(feasibility_plan),
+                    "verified_narrative": _compact_verified_narrative(verified_narrative),
                     "evidence_catalog": _compact_evidence_catalog(evidence),
                     "template_profile": _compact_template_profile(template_profile),
+                    "upstream_context": upstream_context,
                     "previous_validation_error": validation_error,
                 },
             )
@@ -214,6 +245,7 @@ class UniversalPresentationPipeline:
         data_report: DataIntelligenceReport,
         feasibility_plan: AnalysisFeasibilityPlan,
         profile_payload: list[dict[str, Any]],
+        upstream_context: dict[str, Any],
     ) -> EvidencePacketV2:
         validation_error = ""
         for _ in range(2):
@@ -226,6 +258,7 @@ class UniversalPresentationPipeline:
                     "data_report": data_report.model_dump(mode="json"),
                     "feasibility_plan": feasibility_plan.model_dump(mode="json"),
                     "workbook_profiles": profile_payload,
+                    "upstream_context": upstream_context,
                     "previous_validation_error": validation_error,
                 },
             )
@@ -313,6 +346,87 @@ def _validate_evidence_packet(evidence: EvidencePacketV2) -> None:
             raise ValueError(f"invalid table id: {table.table_id}")
 
 
+def _data_report_from_upstream_context(
+    upstream_context: dict[str, Any],
+    profile_payload: list[dict[str, Any]],
+) -> DataIntelligenceReport:
+    planning = _upstream_planning_output(upstream_context)
+    prompt_contract = planning.get("prompt_contract", {}) if isinstance(planning, dict) else {}
+    sheet_count = sum(len(workbook.get("sheets", [])) for workbook in profile_payload if isinstance(workbook, dict))
+    file_names = [
+        str(workbook.get("file_name") or workbook.get("fileName"))
+        for workbook in profile_payload
+        if isinstance(workbook, dict) and (workbook.get("file_name") or workbook.get("fileName"))
+    ]
+    data_requirements = list(prompt_contract.get("data_requirements", []))[:10] if isinstance(prompt_contract, dict) else []
+    assumptions = list(prompt_contract.get("assumptions", []))[:8] if isinstance(prompt_contract, dict) else []
+    return DataIntelligenceReport(
+        status="passed",
+        data_structure_summary=(
+            f"Stage2 already inspected the uploaded workbook set ({len(file_names)} files, {sheet_count} sheets). "
+            f"Files: {', '.join(file_names[:6]) or 'uploaded workbooks'}."
+        ),
+        semantic_notes=data_requirements or ["Use Stage2 prompt contract and workbook profiles as the upstream data interpretation."],
+        relationship_hypotheses=assumptions,
+        quality_findings=["Presentation generation reuses Stage2 planning/calculation output and workbook profiles."],
+        usable_data_notes=data_requirements or ["Workbook profiles and Stage2 calculation artifacts can support presentation evidence discovery."],
+    )
+
+
+def _feasibility_plan_from_upstream_context(upstream_context: dict[str, Any]) -> AnalysisFeasibilityPlan:
+    planning = _upstream_planning_output(upstream_context)
+    prompt_contract = planning.get("prompt_contract", {}) if isinstance(planning, dict) else {}
+    charts = list(prompt_contract.get("charts", [])) if isinstance(prompt_contract, dict) else []
+    insights = list(prompt_contract.get("insights", [])) if isinstance(prompt_contract, dict) else []
+    accepted: list[dict[str, Any]] = []
+    for index, chart in enumerate(charts[:10], start=1):
+        if not isinstance(chart, dict):
+            continue
+        accepted.append({
+            "analysis_id": str(chart.get("chart_id") or f"stage2_chart_{index}"),
+            "question": str(chart.get("purpose") or chart.get("title") or "Stage2 chart analysis"),
+            "method": "Use Stage2-approved calculation tasks and evidence requirements for this chart.",
+            "required_columns": [str(item) for item in chart.get("data_requirements", [])[:12]],
+            "feasible": True,
+            "rationale": str(chart.get("rationale") or "Approved by Stage2 planner."),
+            "recommended_visual": str(chart.get("visualization") or "chart"),
+        })
+    for index, insight in enumerate(insights[:6], start=1):
+        if not isinstance(insight, dict):
+            continue
+        accepted.append({
+            "analysis_id": str(insight.get("insight_id") or f"stage2_insight_{index}"),
+            "question": str(insight.get("question") or "Stage2 insight"),
+            "method": "Use Stage2-approved evidence requirements and calculation artifacts.",
+            "required_columns": [str(item) for item in insight.get("evidence_needed", [])[:12]],
+            "feasible": True,
+            "rationale": str(insight.get("purpose") or "Approved by Stage2 planner."),
+            "recommended_visual": "claim/table/chart as appropriate",
+        })
+    if not accepted:
+        accepted.append({
+            "analysis_id": "stage2_deck_plan",
+            "question": "How should the Stage2-approved deck plan be rendered into an editable presentation?",
+            "method": "Use the Stage2 deck plan, calculation artifact, workbook profiles, and template profile.",
+            "required_columns": [],
+            "feasible": True,
+            "rationale": "Stage2 planning and calculation have completed before presentation rendering.",
+            "recommended_visual": "template-bound management presentation",
+        })
+    return AnalysisFeasibilityPlan(
+        status="passed",
+        accepted_analyses=accepted,
+        rejected_analyses=[],
+        known_limits=["Any additional presentation evidence must not contradict Stage2 calculation artifacts."],
+        questions_for_user=[],
+    )
+
+
+def _upstream_planning_output(upstream_context: dict[str, Any]) -> dict[str, Any]:
+    planning = upstream_context.get("planning_output")
+    return planning if isinstance(planning, dict) else {}
+
+
 def _compact_evidence_catalog(evidence: EvidencePacketV2) -> dict[str, Any]:
     return {
         "metrics": [
@@ -353,6 +467,41 @@ def _compact_evidence_catalog(evidence: EvidencePacketV2) -> dict[str, Any]:
     }
 
 
+def _compact_data_report(report: DataIntelligenceReport) -> dict[str, Any]:
+    return {
+        "status": report.status,
+        "data_structure_summary": report.data_structure_summary[:1600],
+        "semantic_notes": report.semantic_notes[:8],
+        "quality_findings": report.quality_findings[:8],
+        "usable_data_notes": report.usable_data_notes[:10],
+    }
+
+
+def _compact_feasibility_plan(plan: AnalysisFeasibilityPlan) -> dict[str, Any]:
+    return {
+        "status": plan.status,
+        "accepted_analyses": [
+            {
+                "analysis_id": item.analysis_id,
+                "question": item.question,
+                "method": item.method[:500],
+                "recommended_visual": item.recommended_visual,
+            }
+            for item in plan.accepted_analyses[:12]
+        ],
+        "known_limits": plan.known_limits[:8],
+    }
+
+
+def _compact_verified_narrative(narrative: VerifiedAnalysisNarrative) -> dict[str, Any]:
+    return {
+        "status": narrative.status,
+        "insight_summaries": narrative.insight_summaries[:12],
+        "caveats": narrative.caveats[:8],
+        "evidence_usage_notes": narrative.evidence_usage_notes[:8],
+    }
+
+
 def _compact_template_profile(template_profile: dict[str, Any]) -> dict[str, Any]:
     return {
         "source": template_profile.get("source", "default"),
@@ -381,13 +530,14 @@ def load_env_file(path: str | Path) -> None:
 def build_bedrock_model() -> BedrockModel:
     region = os.environ.get("AWS_REGION", "us-east-1")
     model_id = os.environ.get("BEDROCK_MODEL_ID", DEFAULT_MODEL_ID)
-    max_tokens = int(os.environ.get("BEDROCK_MAX_TOKENS", "9000"))
+    max_tokens = int(os.environ.get("BEDROCK_MAX_TOKENS", "32000"))
+    read_timeout = int(os.environ.get("BEDROCK_READ_TIMEOUT", "1200"))
     return BedrockModel(
         model_id=model_id,
         region_name=region,
         temperature=0.1,
         max_tokens=max_tokens,
-        boto_client_config=Config(connect_timeout=10, read_timeout=600, retries={"max_attempts": 2, "mode": "standard"}),
+        boto_client_config=Config(connect_timeout=10, read_timeout=read_timeout, retries={"max_attempts": 2, "mode": "standard"}),
     )
 
 

@@ -309,7 +309,7 @@ export class UiStack extends cdk.Stack {
       environment: {
         PLANNER_TABLE: table.tableName,
         PLANNER_INPUT_BUCKET: inputBucket.bucketName,
-        BEDROCK_MODEL_ID: 'us.anthropic.claude-sonnet-4-6',
+        BEDROCK_MODEL_ID: 'us.anthropic.claude-opus-4-6-v1',
         // requirements_and_formula and calculation stages use Opus for deeper
         // reasoning on complex multi-metric analysis and formula derivation.
         COMPLEX_BEDROCK_MODEL_ID: 'us.anthropic.claude-opus-4-6-v1',
@@ -317,6 +317,8 @@ export class UiStack extends cdk.Stack {
         // for correctness-critical code generation.
         CALCULATION_BEDROCK_MODEL_ID: 'us.anthropic.claude-opus-4-6-v1',
         PRESENTATION_BEDROCK_MODEL_ID: 'us.anthropic.claude-opus-4-6-v1',
+        PRESENTATION_BEDROCK_MAX_TOKENS: '32000',
+        PRESENTATION_BEDROCK_READ_TIMEOUT: '1200',
         AWS_REGION: config.region,
       },
     });
@@ -363,7 +365,7 @@ export class UiStack extends cdk.Stack {
     runTask.addCatch(orchestrationFailed, { errors: [sfn.Errors.ALL], resultPath: '$.plannerError' });
     const stateMachine = new sfn.StateMachine(this, 'PlannerStateMachine', {
       definitionBody: sfn.DefinitionBody.fromChainable(runTask.next(new sfn.Succeed(this, 'PlannerComplete'))),
-      stateMachineType: sfn.StateMachineType.STANDARD, timeout: cdk.Duration.seconds(900),
+      stateMachineType: sfn.StateMachineType.STANDARD, timeout: cdk.Duration.minutes(45),
       logs: { destination: new logs.LogGroup(this, 'PlannerStateMachineLogs', { retention: logs.RetentionDays.THREE_MONTHS }), includeExecutionData: false, level: sfn.LogLevel.ERROR },
       tracingEnabled: true,
     });
