@@ -4,14 +4,22 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "contracts:build": "npm --prefix ../../packages/contracts run build",
+    "prebuild": "npm run contracts:build",
     "build": "tsc",
+    "pretypecheck": "npm run contracts:build",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'lint ok'",
+    "pretest": "npm run contracts:build",
     "test": "vitest run",
     "cdk": "cdk",
+    "presynth": "npm run contracts:build",
     "synth": "cdk synth",
+    "presynth:ui": "npm run contracts:build",
     "synth:ui": "cdk synth --app 'npx tsx src/ui-only-app.ts' SmartReportWorkshopUiStack",
+    "predeploy": "npm run contracts:build",
     "deploy": "cdk deploy --all",
+    "predeploy:ui": "npm run contracts:build",
     "deploy:ui": "cdk deploy --app 'npx tsx src/ui-only-app.ts' SmartReportWorkshopUiStack"
   },
   "dependencies": {

@@ -4,10 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "contracts:build": "npm --prefix ../../packages/contracts run build",
+    "predev": "npm run contracts:build",
     "dev": "vite",
+    "prebuild": "npm run contracts:build",
     "build": "tsc && vite build",
+    "pretypecheck": "npm run contracts:build",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'lint ok'",
+    "pretest": "npm run contracts:build",
     "test": "vitest run",
     "preview": "vite preview"
   },

@@ -3,9 +3,10 @@ import { z } from 'zod';
 export const PLANNER_LIMITS = {
   maxFiles: 20,
   maxFileBytes: 25 * 1024 * 1024,
+  maxTemplateBytes: 6 * 1024 * 1024,
   maxTotalBytes: 100 * 1024 * 1024,
-  maxPromptCharacters: 12_000,
-  maxRevisionCharacters: 4_000,
+  maxPromptCharacters: 64_000,
+  maxRevisionCharacters: 16_000,
 } as const;
 
 const isoDateTime = z.string().datetime({ offset: true });
@@ -15,6 +16,14 @@ const safeFileName = z.string().min(1).max(160).refine(
   value => value.toLowerCase().endsWith('.xlsx') && !value.includes('/') && !value.includes('\\') && !/\p{C}/u.test(value),
   'Only path-free .xlsx file names are accepted',
 );
+const safeTemplateFileName = z.string().min(1).max(160).refine(
+  value => value.toLowerCase().endsWith('.pptx') && !value.includes('/') && !value.includes('\\') && !/\p{C}/u.test(value),
+  'Only path-free .pptx file names are accepted',
+);
+const safeUploadFileName = z.string().min(1).max(160).refine(
+  value => safeFileName.safeParse(value).success || safeTemplateFileName.safeParse(value).success,
+  'Only path-free .xlsx or .pptx file names are accepted',
+);
 
 export const plannerJobStatusSchema = z.enum([
   'UPLOAD_PENDING',
@@ -23,21 +32,40 @@ export const plannerJobStatusSchema = z.enum([
   'NEEDS_REVIEW',
   'REVISION_QUEUED',
   'APPROVED',
+  'CALCULATION_QUEUED',
+  'CALCULATING',
+  'CALCULATION_READY',
+  'CALCULATION_FAILED',
   'FAILED',
   'EXPIRED',
 ]);
 export type PlannerJobStatus = z.infer<typeof plannerJobStatusSchema>;
 
 export const uploadFileRequestSchema = z.object({
-  fileName: safeFileName,
+  kind: z.enum(['excel', 'template']).default('excel'),
+  fileName: safeUploadFileName,
   sizeBytes: z.number().int().positive().max(PLANNER_LIMITS.maxFileBytes),
   sha256,
-}).strict();
+}).strict().superRefine((file, context) => {
+  const validName = file.kind === 'excel' ? safeFileName.safeParse(file.fileName).success : safeTemplateFileName.safeParse(file.fileName).success;
+  if (!validName) context.addIssue({ code: z.ZodIssueCode.custom, path: ['fileName'], message: `A ${file.kind} upload has an invalid file extension` });
+  if (file.kind === 'template' && file.sizeBytes > PLANNER_LIMITS.maxTemplateBytes) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['sizeBytes'], message: 'PPTX template exceeds the limit' });
+  }
+});
 export type UploadFileRequest = z.infer<typeof uploadFileRequestSchema>;
 
 export const createUploadRequestSchema = z.object({
-  files: z.array(uploadFileRequestSchema).min(1).max(PLANNER_LIMITS.maxFiles),
+  files: z.array(uploadFileRequestSchema).min(1).max(PLANNER_LIMITS.maxFiles + 1),
 }).strict().superRefine((request, context) => {
+  const excelFiles = request.files.filter(file => file.kind === 'excel');
+  const templates = request.files.filter(file => file.kind === 'template');
+  if (excelFiles.length < 1 || excelFiles.length > PLANNER_LIMITS.maxFiles) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['files'], message: 'Upload one to twenty Excel files' });
+  }
+  if (templates.length > 1) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['files'], message: 'Upload at most one PPTX template' });
+  }
   const total = request.files.reduce((sum, file) => sum + file.sizeBytes, 0);
   if (total > PLANNER_LIMITS.maxTotalBytes) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['files'], message: 'Total upload size exceeds the limit' });
@@ -47,7 +75,7 @@ export type CreateUploadRequest = z.infer<typeof createUploadRequestSchema>;
 
 export const uploadSlotSchema = z.object({
   uploadId: uuid,
-  fileName: safeFileName,
+  fileName: safeUploadFileName,
   objectKey: z.string().min(1).max(512),
   uploadUrl: z.string().url(),
   fields: z.record(z.string()),
@@ -58,10 +86,20 @@ export type UploadSlot = z.infer<typeof uploadSlotSchema>;
 export const createUploadResponseSchema = z.object({
   jobId: uuid,
   status: z.literal('UPLOAD_PENDING'),
-  uploads: z.array(uploadSlotSchema).min(1).max(PLANNER_LIMITS.maxFiles),
+  uploads: z.array(uploadSlotSchema).min(1).max(PLANNER_LIMITS.maxFiles + 1),
   expiresAt: isoDateTime,
 }).strict();
 export type CreateUploadResponse = z.infer<typeof createUploadResponseSchema>;
+
+export const attachTemplateRequestSchema = z.object({
+  file: uploadFileRequestSchema,
+}).strict().superRefine((request, context) => {
+  if (request.file.kind !== 'template') {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['file', 'kind'], message: 'Only a PPTX template can be attached here' });
+  }
+});
+
+export const attachTemplateResponseSchema = z.object({ upload: uploadSlotSchema }).strict();
 
 export const createPlanRequestSchema = z.object({
   jobId: uuid,
@@ -469,6 +507,52 @@ export const workbookSourceReferenceSchema = z.object({
 }).strict();
 export type WorkbookSourceReference = z.infer<typeof workbookSourceReferenceSchema>;
 
+// Header-only schema shown to the owner during plan review. It is intentionally
+// separate from workbook samples so the selector can guide bindings without
+// exposing arbitrary cell values in the browser.
+const workbookSheetSchema = z.object({
+  sheetName: z.string().min(1).max(160),
+  columns: z.array(z.string().min(1).max(160)).max(60),
+}).strict();
+
+export const workbookSchemaSchema = z.object({
+  uploadId: uuid,
+  fileName: safeFileName,
+  sheets: z.array(workbookSheetSchema).max(30),
+}).strict();
+export type WorkbookSchema = z.infer<typeof workbookSchemaSchema>;
+
+// This is deliberately a small, safe projection of a correlated CloudWatch event.
+// It lets a job owner see progress without receiving container logs, prompts, or data.
+export const plannerProgressSchema = z.object({
+  currentStage: z.enum(['requirements', 'formula', 'requirements_and_formula', 'calculation', 'composition', 'prompt-alignment', 'calculation-code', 'calculation-execution']).nullable(),
+  state: z.enum(['waiting', 'started', 'completed', 'retrying', 'failed']),
+  attempt: z.number().int().positive().nullable(),
+  updatedAt: isoDateTime.nullable(),
+}).strict().nullable();
+export type PlannerProgress = z.infer<typeof plannerProgressSchema>;
+
+const calculationTaskSummarySchema = z.object({
+  taskId: z.string().min(1).max(160),
+  metricId: z.string().min(1).max(160),
+  formulaId: z.string().min(1).max(160),
+  rowCount: z.number().int().nonnegative(),
+  preview: z.array(z.record(z.unknown())).max(12),
+  warnings: z.array(z.string().max(500)).max(30),
+}).strict();
+
+export const calculationSummarySchema = z.object({
+  executionId: uuid,
+  status: z.literal('succeeded'),
+  generatedAt: isoDateTime,
+  durationMs: z.number().int().nonnegative(),
+  codeSha256: sha256,
+  codePreview: z.string().max(8_000),
+  artifactKey: z.string().min(1).max(512),
+  tasks: z.array(calculationTaskSummarySchema).max(30),
+}).strict();
+export type CalculationSummary = z.infer<typeof calculationSummarySchema>;
+
 export const plannerJobResponseSchema = z.object({
   jobId: uuid,
   status: plannerJobStatusSchema,
@@ -476,8 +560,41 @@ export const plannerJobResponseSchema = z.object({
   createdAt: isoDateTime,
   updatedAt: isoDateTime,
   expiresAt: isoDateTime,
+  prompt: z.string().max(PLANNER_LIMITS.maxPromptCharacters).nullable(),
+  fileNames: z.array(safeFileName).max(PLANNER_LIMITS.maxFiles),
+  templateFileName: safeTemplateFileName.nullable(),
   planningOutput: aiPlanningOutputSchema.nullable(),
   sourceReferences: z.array(workbookSourceReferenceSchema),
+  workbookSchema: z.array(workbookSchemaSchema).default([]),
   safeErrorCode: z.string().max(120).nullable(),
+  promptAlignmentScore: z.number().int().min(0).max(100).nullable(),
+  calculationSummary: calculationSummarySchema.nullable(),
+  progress: plannerProgressSchema,
 }).strict();
 export type PlannerJobResponse = z.infer<typeof plannerJobResponseSchema>;
+
+// Returned by the owner-scoped project list. It deliberately excludes the
+// planning JSON and source references; opening a project still requires the
+// individual owner-checked GET endpoint.
+export const plannerProjectSummarySchema = z.object({
+  jobId: uuid,
+  status: plannerJobStatusSchema,
+  planVersion: z.number().int().nonnegative(),
+  createdAt: isoDateTime,
+  updatedAt: isoDateTime,
+  expiresAt: isoDateTime,
+  title: z.string().max(300).nullable(),
+  promptPreview: z.string().max(240),
+  fileNames: z.array(safeFileName).max(PLANNER_LIMITS.maxFiles),
+  templateFileName: safeTemplateFileName.nullable(),
+  hasPlanningOutput: z.boolean(),
+  safeErrorCode: z.string().max(120).nullable(),
+  promptAlignmentScore: z.number().int().min(0).max(100).nullable(),
+  calculationSummary: calculationSummarySchema.nullable(),
+}).strict();
+export type PlannerProjectSummary = z.infer<typeof plannerProjectSummarySchema>;
+
+export const listPlannerJobsResponseSchema = z.object({
+  projects: z.array(plannerProjectSummarySchema).max(30),
+}).strict();
+export type ListPlannerJobsResponse = z.infer<typeof listPlannerJobsResponseSchema>;

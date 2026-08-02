@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { beginSignIn, completeSignIn, signOut, type DisplayIdentity } from './auth';
+import { AUTH_SESSION_CLEARED_EVENT, beginSignIn, completeSignIn, signOut, type DisplayIdentity } from './auth';
 import { MockJobClient } from './clients/mock-job-client';
 import { AwsPlannerClient } from './clients/aws-planner-client';
 import { isCognitoConfigured, isRealPlannerConfigured } from './runtime-config';
 import type { JobSnapshot } from './types/job';
-import type { PlannerJobResponse } from '@smart-report/contracts';
+import type { AIPlanningOutputDto, PlannerJobResponse, PlannerProjectSummary } from '@smart-report/contracts';
+import { exportWithTemplate } from './utils/template-exporter';
+import { createRealPptxSpec } from './utils/real-pptx-spec';
 
 type StageKey = 'upload' | 'analysis' | 'plan' | 'execute' | 'preview' | 'output' | 'send';
 
@@ -20,6 +22,44 @@ const STAGES: Array<{ key: StageKey; number: string; label: string; role: string
 
 const mockClient = new MockJobClient();
 const awsPlanner = new AwsPlannerClient();
+const ACTIVE_PLANNER_STATUSES = new Set(['QUEUED', 'RUNNING', 'REVISION_QUEUED', 'CALCULATION_QUEUED', 'CALCULATING']);
+const RETRYABLE_PLANNING_ERRORS = new Set(['PLAN_OUTPUT_TOO_LARGE', 'PLAN_OUTPUT_STORAGE_LIMIT']);
+const PLANNER_ERROR_MESSAGES: Record<string, string> = {
+  PLAN_OUTPUT_TOO_LARGE: 'AI 規劃內容超過單次輸出容量，系統已提高各階段額度；可直接使用原檔案重新規劃。',
+  PLAN_OUTPUT_STORAGE_LIMIT: '規劃內容超過專案安全儲存容量；可直接重新規劃以產生較精簡版本。',
+  PLANNING_FAILED: 'AI 規劃未完成，請稍後再試。',
+  PLANNER_ORCHESTRATION_FAILED: '規劃工作節點未能完成，請稍後再試。',
+  CALCULATION_FAILED: 'Excel 計算未完成；可手動重試，系統會沿用前次錯誤重新產生計算程式。',
+  CALCULATION_EXECUTION_TIMEOUT: '計算程式執行超過 120 秒；可手動重試，系統會沿用逾時原因重新產生更有效率的程式。',
+  CALCULATION_CODE_REJECTED: '生成的計算程式未通過安全驗證；可手動重試，系統會沿用前次錯誤修正程式。',
+};
+const PLANNER_STAGES = [
+  { key: 'requirements_and_formula', label: '理解需求與規劃公式' },
+  { key: 'calculation', label: '規劃計算' },
+  { key: 'composition', label: '編排簡報' },
+  { key: 'prompt-alignment', label: '核對 Prompt' },
+] as const;
+
+function formatElapsed(startedAt: string, now: number) {
+  const seconds = Math.max(0, Math.floor((now - Date.parse(startedAt)) / 1_000));
+  const minutes = Math.floor(seconds / 60);
+  return minutes > 0 ? `${minutes}:${String(seconds % 60).padStart(2, '0')}` : `${seconds} 秒`;
+}
+
+function progressStateText(state: string | undefined) {
+  return ({ waiting: '等待 Fargate 啟動', started: '執行中', completed: '已完成', retrying: '正在修正並重試', failed: '失敗' } as Record<string, string>)[state ?? 'waiting'];
+}
+
+function activeRunStartedAt(plan: PlannerJobResponse) {
+  return ['CALCULATION_QUEUED', 'CALCULATING'].includes(plan.status) ? plan.updatedAt : plan.createdAt;
+}
+
+function stageForRealPlan(plan: PlannerJobResponse): { stage: StageKey; maxStage: number } {
+  if (['CALCULATION_READY'].includes(plan.status)) return { stage: 'preview', maxStage: 4 };
+  if (['CALCULATION_QUEUED', 'CALCULATING', 'CALCULATION_FAILED'].includes(plan.status)) return { stage: 'execute', maxStage: 3 };
+  if (['NEEDS_REVIEW', 'APPROVED'].includes(plan.status) && plan.planningOutput) return { stage: 'plan', maxStage: 2 };
+  return { stage: 'analysis', maxStage: 1 };
+}
 
 function App() {
   const [identity, setIdentity] = useState<DisplayIdentity | null>(null);
@@ -27,9 +67,12 @@ function App() {
   const [maxStage, setMaxStage] = useState(0);
   const [prompt, setPrompt] = useState('請根據我提供的資料，找出重要趨勢與異常，必要時研究適用公式，並產生給主管看的決策簡報。');
   const [files, setFiles] = useState<File[]>([]);
+  const [template, setTemplate] = useState<File | null>(null);
   const [job, setJob] = useState<JobSnapshot | null>(null);
   const [realPlan, setRealPlan] = useState<PlannerJobResponse | null>(null);
+  const [savedProjects, setSavedProjects] = useState<PlannerProjectSummary[]>([]);
   const [planJson, setPlanJson] = useState('');
+  const [planDirty, setPlanDirty] = useState(false);
   const [planInstruction, setPlanInstruction] = useState('');
   const [planRevisions, setPlanRevisions] = useState<string[]>([]);
   const [selectedSlide, setSelectedSlide] = useState(0);
@@ -40,29 +83,106 @@ function App() {
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [now, setNow] = useState(() => Date.now());
 
+  async function refreshSavedProjects() {
+    if (!isRealPlannerConfigured() || !identity) return;
+    try {
+      setSavedProjects(await awsPlanner.list());
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '無法讀取已儲存的專案');
+    }
+  }
+
+  // A signed-in user can leave or reload the browser without losing the
+  // server-side job. The list contains only that Cognito subject's projects.
   useEffect(() => {
-    completeSignIn().then(setIdentity).catch((reason: unknown) => {
+    const handleAuthSessionCleared = () => {
+      setIdentity(null);
+      setSavedProjects([]);
+      setError('登入已逾時，請重新使用 Cognito 登入');
+    };
+    window.addEventListener(AUTH_SESSION_CLEARED_EVENT, handleAuthSessionCleared);
+    completeSignIn().then(async signedInIdentity => {
+      setIdentity(signedInIdentity);
+      if (signedInIdentity && isRealPlannerConfigured()) setSavedProjects(await awsPlanner.list());
+    }).catch((reason: unknown) => {
       setError(reason instanceof Error ? reason.message : '登入失敗');
     });
+    return () => window.removeEventListener(AUTH_SESSION_CLEARED_EVENT, handleAuthSessionCleared);
   }, []);
 
   useEffect(() => {
-    if (!realPlan || !['QUEUED', 'RUNNING', 'REVISION_QUEUED'].includes(realPlan.status)) return;
+    if (!realPlan || !ACTIVE_PLANNER_STATUSES.has(realPlan.status)) return;
     const timer = window.setTimeout(() => {
       awsPlanner.get(realPlan.jobId).then(updated => {
         setRealPlan(updated);
-        if (updated.planningOutput) setPlanJson(JSON.stringify(updated.planningOutput, null, 2));
+        if (updated.planningOutput) { setPlanJson(JSON.stringify(updated.planningOutput, null, 2)); setPlanDirty(false); }
+        if (!ACTIVE_PLANNER_STATUSES.has(updated.status)) void refreshSavedProjects();
       }).catch(reason => setError(reason instanceof Error ? reason.message : '無法更新 Planner 狀態'));
     }, 3000);
     return () => window.clearTimeout(timer);
   }, [realPlan]);
+
+  useEffect(() => {
+    if (!realPlan || !ACTIVE_PLANNER_STATUSES.has(realPlan.status)) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [realPlan?.jobId, realPlan?.status]);
 
   const stageIndex = STAGES.findIndex((item) => item.key === stage);
   const completedExecution = useMemo(
     () => job?.stages.filter((item) => item.status === 'COMPLETED').length ?? 0,
     [job],
   );
+  const editablePlan = useMemo<AIPlanningOutputDto | null>(() => {
+    if (!planJson) return realPlan?.planningOutput ?? null;
+    try { return JSON.parse(planJson) as AIPlanningOutputDto; } catch { return null; }
+  }, [planJson, realPlan?.planningOutput]);
+
+  function updatePlanEditor(mutator: (draft: AIPlanningOutputDto) => void) {
+    if (!editablePlan) {
+      setError('計畫 JSON 無法解析，請先修正 JSON 後再使用欄位選單。');
+      return;
+    }
+    const draft = JSON.parse(JSON.stringify(editablePlan)) as AIPlanningOutputDto;
+    mutator(draft);
+    setPlanJson(JSON.stringify(draft, null, 2));
+    setPlanDirty(true);
+  }
+
+  function updateBinding(taskId: string, bindingIndex: number, update: Partial<AIPlanningOutputDto['calculation_plan']['tasks'][number]['input_bindings'][number]>) {
+    updatePlanEditor(draft => {
+      const task = draft.calculation_plan.tasks.find(item => item.task_id === taskId);
+      if (task?.input_bindings[bindingIndex]) Object.assign(task.input_bindings[bindingIndex], update);
+    });
+  }
+
+  function selectBindingWorkbook(taskId: string, bindingIndex: number, uploadId: string) {
+    const workbook = realPlan?.workbookSchema.find(item => item.uploadId === uploadId);
+    const sheet = workbook?.sheets.find(item => item.columns.length > 0) ?? workbook?.sheets[0];
+    updateBinding(taskId, bindingIndex, { workbook_upload_id: uploadId, workbook_selector: workbook?.fileName ?? '', sheet_selector: sheet?.sheetName ?? '', column_selector: sheet?.columns[0] ?? '' });
+  }
+
+  function selectBindingSheet(taskId: string, bindingIndex: number, uploadId: string, sheetName: string) {
+    const sheet = realPlan?.workbookSchema.find(item => item.uploadId === uploadId)?.sheets.find(item => item.sheetName === sheetName);
+    updateBinding(taskId, bindingIndex, { sheet_selector: sheetName, column_selector: sheet?.columns[0] ?? '' });
+  }
+
+  function addMissingBinding(taskId: string, variable: string) {
+    const workbook = realPlan?.workbookSchema.find(item => item.sheets.some(sheet => sheet.columns.length > 0));
+    const sheet = workbook?.sheets.find(item => item.columns.length > 0);
+    if (!workbook || !sheet) {
+      setError('找不到可選的 Excel 欄位，請確認上傳檔案第一列包含欄位名稱。');
+      return;
+    }
+    updatePlanEditor(draft => {
+      const task = draft.calculation_plan.tasks.find(item => item.task_id === taskId);
+      if (!task || task.input_bindings.some(item => item.variable === variable)) return;
+      task.input_bindings.push({ variable, workbook_upload_id: workbook.uploadId, workbook_selector: workbook.fileName, sheet_selector: sheet.sheetName, column_selector: sheet.columns[0], cell_range_hint: '', aggregation: '請選擇與公式相符的彙總方式', required: true });
+    });
+  }
 
   function moveTo(next: StageKey) {
     const index = STAGES.findIndex((item) => item.key === next);
@@ -79,9 +199,11 @@ function App() {
       if (isRealPlannerConfigured()) {
         if (!identity) throw new Error('請先使用 Cognito 登入');
         if (files.length < 1) throw new Error('請至少選擇一個 Excel 檔案');
-        const created = await awsPlanner.create(files, prompt.trim());
+        const created = await awsPlanner.create(files, prompt.trim(), template);
         setRealPlan(created);
+        void refreshSavedProjects();
         setPlanJson('');
+        setPlanDirty(false);
         moveTo('analysis');
         return;
       }
@@ -101,18 +223,70 @@ function App() {
     }
   }
 
+  async function retryPlanning() {
+    if (!realPlan || !RETRYABLE_PLANNING_ERRORS.has(realPlan.safeErrorCode ?? '')) return;
+    setBusy(true);
+    setError('');
+    try {
+      const retried = await awsPlanner.retryPlanning(realPlan.jobId);
+      setRealPlan(retried);
+      moveTo('analysis');
+      void refreshSavedProjects();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '無法重新規劃');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function approvePlan() {
     setBusy(true);
+    setError('');
     try {
       if (realPlan?.planningOutput) {
+        if (planDirty) throw new Error('請先儲存欄位／JSON 修改，確認通過後才能執行計算。');
         const approved = await awsPlanner.approve(realPlan.jobId, realPlan.planVersion);
         setRealPlan(approved);
-        const mock = await mockClient.createJob({ topic: prompt.trim(), audience: 'Stage ④ Mock', style: 'Stage ④ Mock', localFiles: files.map(file => ({ name: file.name, size: file.size })) });
-        setJob(await mockClient.approvePlan(mock.jobId));
+        moveTo('execute');
+        return;
       } else if (job) {
         setJob(await mockClient.approvePlan(job.jobId));
       } else return;
       moveTo('execute');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '無法核准計畫');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function exportRealPptx() {
+    if (!realPlan?.planningOutput || !realPlan.calculationSummary) throw new Error('請先完成真實計算');
+    if (!template && !realPlan.templateFileName) throw new Error('請先上傳 PPTX 範本');
+    if (template && template.name !== realPlan.templateFileName) throw new Error('你選了新的 PPTX 範本，請先將它保存到此專案再輸出。');
+    setBusy(true);
+    setError('');
+    try {
+      const artifact = createRealPptxSpec(realPlan.planningOutput, realPlan.calculationSummary);
+      const safeTitle = realPlan.planningOutput.deck_plan.title.replace(/[\\/:*?"<>|]/g, '_').slice(0, 80) || '分析報告';
+      await exportWithTemplate(template, artifact.slides, artifact.data, `${safeTitle}.pptx`, { jobId: realPlan.jobId });
+      setOutputReady(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'PPTX 生成失敗');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveTemplateForProject() {
+    if (!realPlan || !template) return;
+    setBusy(true);
+    setError('');
+    try {
+      setRealPlan(await awsPlanner.attachTemplate(realPlan.jobId, template));
+      await refreshSavedProjects();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '無法將 PPTX 範本保存到專案');
     } finally {
       setBusy(false);
     }
@@ -131,8 +305,30 @@ function App() {
   }
 
   function reset() {
-    setStage('upload'); setMaxStage(0); setJob(null); setRealPlan(null); setPlanJson(''); setFiles([]);
+    setStage('upload'); setMaxStage(0); setJob(null); setRealPlan(null); setPlanJson(''); setPlanDirty(false); setFiles([]); setTemplate(null);
     setPlanRevisions([]); setPreviewRevisions([]); setOutputReady(false); setSent(false); setRecipient('');
+  }
+
+  async function resumeProject(project: PlannerProjectSummary) {
+    setBusy(true);
+    setError('');
+    try {
+      const restored = await awsPlanner.get(project.jobId);
+      setRealPlan(restored);
+      setPrompt(restored.prompt ?? project.promptPreview);
+      setPlanJson(restored.planningOutput ? JSON.stringify(restored.planningOutput, null, 2) : '');
+      setPlanDirty(false);
+      setFiles([]);
+      setTemplate(null);
+      const restoredStage = stageForRealPlan(restored);
+      setStage(restoredStage.stage);
+      setMaxStage(restoredStage.maxStage);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '無法開啟已儲存的專案');
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -141,7 +337,7 @@ function App() {
         <div className="brand"><span className="brand-mark">L</span><div><strong>Lobster Studio</strong><small>Prompt-driven report agent</small></div></div>
         <div className="top-actions">
           <span className="environment"><i />UI-1 · Workshop</span>
-          <span className={`badge ${isRealPlannerConfigured() ? 'real' : 'mock'}`}>{isRealPlannerConfigured() ? 'STAGE ② REAL' : 'MOCK'}</span>
+          <span className={`badge ${isRealPlannerConfigured() ? 'real' : 'mock'}`}>{isRealPlannerConfigured() ? 'PLAN · CALC · PPTX REAL' : 'MOCK'}</span>
           {identity ? <button className="button secondary" onClick={signOut}>{identity.email} · 登出</button> : <button className="button primary small" disabled={!isCognitoConfigured()} onClick={() => beginSignIn()}>Cognito 登入</button>}
         </div>
       </header>
@@ -162,34 +358,50 @@ function App() {
 
         <div className="stage-heading">
           <div><span className="eyebrow">{STAGES[stageIndex].role}</span><h1>{STAGES[stageIndex].number} {STAGES[stageIndex].label}</h1></div>
-          <div className="stage-meta"><span>Job</span><strong>{realPlan?.jobId ?? job?.jobId ?? '尚未建立'}</strong><small>{isRealPlannerConfigured() ? 'Excel + Prompt + Planner REAL · Stage ④+ MOCK' : 'UI fixture only'}</small></div>
+          <div className="stage-meta"><span>Job</span><strong>{realPlan?.jobId ?? job?.jobId ?? '尚未建立'}</strong><small>{isRealPlannerConfigured() ? 'Excel + Prompt + Plan + Calculation + PPTX REAL' : 'UI fixture only'}</small></div>
         </div>
 
         {error && <div className="notice warning">{error}</div>}
 
         {stage === 'upload' && <section className="stage-card upload-stage-card">
           <div className="intro-copy"><span className="eyebrow">One prompt, adaptive workflow</span><h2>把你想做的事情直接告訴龍蝦。</h2><p>不用填受眾、公式或簡報格式表格。Lobster 會從 Prompt 判斷目標、限制、資料需求、研究方式、Skill 與輸出規格，再交給你確認。</p></div>
-          <label className="prompt-box"><span>任務 Prompt</span><textarea rows={8} value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="例如：比較三種方案，找出適用公式與公開資料，做成給主管看的 10 頁決策簡報..." /><small>目前只進行 mock 分析，不會送到模型或外部服務。</small></label>
-          <label className="file-picker large"><input type="file" accept=".xlsx" multiple onChange={(event) => setFiles(Array.from(event.target.files ?? []).slice(0, 20))} /><strong>選擇 Excel 檔案（最多 20 個）</strong><span>{isRealPlannerConfigured() ? '檔案會加密上傳至 AWS，24 小時後刪除' : 'Mock 模式不會上傳'}</span></label>
+          <label className="prompt-box"><span>任務 Prompt</span><textarea rows={8} value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="例如：比較三種方案，找出適用公式與公開資料，做成給主管看的 10 頁決策簡報..." /><small>{isRealPlannerConfigured() ? '會儲存在你的私有專案中，供你日後續作。' : '目前只進行 mock 分析，不會送到模型或外部服務。'}</small></label>
+          <label className="file-picker large"><input type="file" accept=".xlsx" multiple onChange={(event) => setFiles(Array.from(event.target.files ?? []).slice(0, 20))} /><strong>選擇 Excel 檔案（最多 20 個）</strong><span>{isRealPlannerConfigured() ? '檔案會加密上傳至 AWS，專案與輸入資料保留 30 天' : 'Mock 模式不會上傳'}</span></label>
           {files.length > 0 && <div className="file-chips">{files.map((file) => <span key={`${file.name}-${file.size}`}>{file.name}<small>{(file.size / 1024).toFixed(1)} KB</small></span>)}</div>}
+          <label className="file-picker"><input type="file" accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation" onChange={(event) => setTemplate(event.target.files?.[0] ?? null)} /><strong>選擇 PPTX 範本（生成前必填）</strong><span>{template ? `${template.name} · 將與此專案私有保存，供續作時使用` : '可先開始規劃；選擇後會與專案一併私有保存，供日後輸出使用'}</span></label>
+          {realPlan && template && template.name !== realPlan.templateFileName && <button className="button secondary" disabled={busy} onClick={() => void saveTemplateForProject()}>將目前範本保存到此專案</button>}
+          {identity && isRealPlannerConfigured() && <section className="saved-projects"><div className="saved-projects-head"><div><span className="eyebrow">你的已儲存專案</span><strong>從上次狀態繼續</strong></div><button className="button secondary" disabled={busy} onClick={() => void refreshSavedProjects()}>重新整理</button></div>{savedProjects.length === 0 ? <p>尚無可續作的專案。建立後會在這裡保留 30 天。</p> : <div className="saved-project-list">{savedProjects.map(project => <button key={project.jobId} className="saved-project" disabled={busy} onClick={() => void resumeProject(project)}><span className={`badge ${project.status === 'NEEDS_REVIEW' || project.status === 'APPROVED' ? 'real' : 'mock'}`}>{project.status}</span><strong>{project.title || project.promptPreview || '未命名規劃'}</strong><small>{project.fileNames.join('、') || '上傳尚未完成'} · {new Date(project.updatedAt).toLocaleString('zh-TW')}</small>{project.promptAlignmentScore !== null && <em>Prompt 相符度 {project.promptAlignmentScore}/100</em>} {project.safeErrorCode && <em>{project.safeErrorCode}</em>}</button>)}</div>}</section>}
           <button className="button primary stage-action" disabled={busy || !prompt.trim()} onClick={startAnalysis}>{busy ? '上傳與建立中...' : isRealPlannerConfigured() ? '上傳並開始真實 AI 分析 →' : '開啟非推論規劃範例 →'}</button>
         </section>}
 
         {stage === 'analysis' && realPlan && <section className="stage-card">
           <div className="agent-working"><div className="agent-orb">L</div><div><span className="badge real">REAL AWS PLANNER</span><h2>{realPlan.status === 'NEEDS_REVIEW' ? '真實計畫已完成' : realPlan.status === 'FAILED' ? '規劃失敗' : 'Fargate Agent 正在讀取 Excel 並建立計畫'}</h2><p>狀態：{realPlan.status} · Plan version {realPlan.planVersion}</p></div></div>
-          {realPlan.safeErrorCode && <div className="notice warning">{realPlan.safeErrorCode}</div>}
-          {realPlan.planningOutput && <div className="analysis-grid"><article><span>受眾</span><strong>{realPlan.planningOutput.prompt_contract.target_audience}</strong></article><article><span>頁數</span><strong>{realPlan.planningOutput.deck_plan.total_pages}</strong></article><article><span>公式</span><strong>{realPlan.planningOutput.formula_plan.formulas.length}</strong></article><article><span>計算任務</span><strong>{realPlan.planningOutput.calculation_plan.tasks.length}</strong></article><article><span>圖表</span><strong>{realPlan.planningOutput.prompt_contract.charts.length}</strong></article><article><span>來源座標</span><strong>{realPlan.sourceReferences.length}</strong></article></div>}
-          {realPlan.status === 'NEEDS_REVIEW' && <button className="button primary stage-action" onClick={() => moveTo('plan')}>檢視與編輯真實計畫 →</button>}
+          {ACTIVE_PLANNER_STATUSES.has(realPlan.status) && <section className="planner-progress" aria-live="polite">
+            <div className="planner-progress-summary"><div><span className="eyebrow">CloudWatch monitored progress</span><strong>{realPlan.progress?.currentStage ? PLANNER_STAGES.find(stageItem => stageItem.key === realPlan.progress?.currentStage)?.label : '等待工作節點啟動'}</strong><small>{progressStateText(realPlan.progress?.state)}{realPlan.progress?.attempt ? ` · 第 ${realPlan.progress.attempt} 次嘗試` : ''}</small></div><div><span>本次 AI 執行耗時</span><strong>{formatElapsed(activeRunStartedAt(realPlan), now)}</strong><small>快速模式：規劃與計算合計目標 15 分鐘內（不含人工審核）</small></div></div>
+            <ol className="planner-stage-track">{PLANNER_STAGES.map((stageItem, index) => {
+              const currentIndex = PLANNER_STAGES.findIndex(item => item.key === realPlan.progress?.currentStage);
+              const state = currentIndex > index || (currentIndex === index && realPlan.progress?.state === 'completed') ? 'completed' : currentIndex === index ? 'active' : '';
+              return <li className={state} key={stageItem.key}><i>{state === 'completed' ? '✓' : index + 1}</i><span>{stageItem.label}</span></li>;
+            })}</ol>
+            <p>狀態來自此工作任務對應的 CloudWatch 結構化事件；不會顯示 Excel 內容、Prompt 或完整容器日誌。</p>
+          </section>}
+          {realPlan.safeErrorCode && <div className="notice warning"><strong>{PLANNER_ERROR_MESSAGES[realPlan.safeErrorCode] ?? '工作未完成，請稍後再試。'}</strong><small>錯誤代碼：{realPlan.safeErrorCode}</small></div>}
+          {realPlan.status === 'FAILED' && RETRYABLE_PLANNING_ERRORS.has(realPlan.safeErrorCode ?? '') && <button className="button primary" disabled={busy} onClick={() => void retryPlanning()}>{busy ? '正在重新啟動...' : '使用原檔案重新規劃 →'}</button>}
+          {realPlan.status === 'CALCULATION_FAILED' && <button className="button primary" disabled={busy} onClick={async () => { try { setBusy(true); setRealPlan(await awsPlanner.retryCalculation(realPlan.jobId)); } catch (reason) { setError(reason instanceof Error ? reason.message : '無法重新計算'); } finally { setBusy(false); } }}>依相同計畫並沿用錯誤修正 →</button>}
+          {realPlan.planningOutput && <div className="analysis-grid"><article><span>受眾</span><strong>{realPlan.planningOutput.prompt_contract.target_audience}</strong></article><article><span>頁數</span><strong>{realPlan.planningOutput.deck_plan.total_pages}</strong></article><article><span>公式</span><strong>{realPlan.planningOutput.formula_plan.formulas.length}</strong></article><article><span>計算任務</span><strong>{realPlan.planningOutput.calculation_plan.tasks.length}</strong></article><article><span>圖表</span><strong>{realPlan.planningOutput.prompt_contract.charts.length}</strong></article><article><span>Prompt 相符度</span><strong>{realPlan.promptAlignmentScore === null ? '—' : `${realPlan.promptAlignmentScore}/100`}</strong></article><article><span>來源座標</span><strong>{realPlan.sourceReferences.length}</strong></article></div>}
+          {['NEEDS_REVIEW', 'APPROVED'].includes(realPlan.status) && realPlan.planningOutput && <button className="button primary stage-action" onClick={() => moveTo('plan')}>檢視與編輯真實計畫 →</button>}
         </section>}
 
         {stage === 'plan' && realPlan?.planningOutput && <section className="stage-card">
           <div className="section-title"><div><span className="eyebrow">AIPlanningOutput v3 · REAL</span><h2>{realPlan.planningOutput.deck_plan.title}</h2><p>{realPlan.planningOutput.deck_plan.narrative_strategy}</p></div><span className="badge real">VERSION {realPlan.planVersion}</span></div>
+          <div className="notice"><strong>快速規劃模式：</strong>先確認目標、頁數、公式與資料綁定即可；洞察文案與版面可在預覽階段再調整。開始計算前，請使用下方選單確認每個公式變數連到正確的 Excel 欄位。</div>
           <div className="requirement-grid">{realPlan.planningOutput.formula_plan.formulas.map(formula => <article key={formula.formula_id}><strong>{formula.name}</strong><p><code>{formula.expression}</code></p><small>{formula.status} · {formula.source_candidates.map(source => `${source.source_type}/${source.verification_state}`).join('、')}</small></article>)}</div>
           <div className="deck-plan-grid">{realPlan.planningOutput.deck_plan.slides.map(slide => <article className={`deck-page-card ${slide.kind}`} key={slide.page_number}><div className="deck-page-head"><span>{String(slide.page_number).padStart(2, '0')}</span><small>{slide.kind}</small></div><h3>{slide.title}</h3><p>{slide.key_message}</p><small>{slide.layout_guidance}</small></article>)}</div>
-          <label className="prompt-box"><span>完整 JSON 手動編輯</span><textarea rows={22} value={planJson} onChange={event => setPlanJson(event.target.value)} /></label>
-          <div className="action-row"><button className="button secondary" disabled={busy} onClick={async () => { try { setBusy(true); const parsed = JSON.parse(planJson); const updated = await awsPlanner.manualEdit(realPlan.jobId, parsed, realPlan.planVersion); setRealPlan(updated); setPlanJson(JSON.stringify(updated.planningOutput, null, 2)); } catch (reason) { setError(reason instanceof Error ? reason.message : 'JSON 修改失敗'); } finally { setBusy(false); } }}>儲存手動修改</button></div>
+          {editablePlan && <details className="execution-plan binding-editor" open><summary>Excel 欄位綁定（計算前必須確認）</summary><p>每個公式變數必須剛好有一個綁定。先選 Excel 檔、工作表與欄位；變更後按「儲存手動修改」，後端會再次驗證選擇是否屬於此專案。</p>{realPlan.workbookSchema.length === 0 && <div className="notice warning">此舊專案尚未儲存欄位目錄；可重新規劃一次建立選單，或使用 JSON 手動調整。</div>}<div className="binding-task-list">{editablePlan.calculation_plan.tasks.map(task => { const formula = editablePlan.formula_plan.formulas.find(item => item.formula_id === task.formula_id); const missing = formula?.variables.filter(variable => !task.input_bindings.some(binding => binding.variable === variable.symbol)) ?? []; return <article className="binding-task" key={task.task_id}><div><strong>{task.objective}</strong><small>{task.task_id} · 公式：{formula?.expression ?? task.formula_id}</small></div>{task.input_bindings.map((binding, index) => { const workbook = realPlan.workbookSchema.find(item => item.uploadId === binding.workbook_upload_id); const sheet = workbook?.sheets.find(item => item.sheetName === binding.sheet_selector); return <div className="binding-row" key={`${binding.variable}-${index}`}><strong>{binding.variable}</strong><label><span>Excel</span><select value={binding.workbook_upload_id} onChange={event => selectBindingWorkbook(task.task_id, index, event.target.value)}>{realPlan.workbookSchema.map(item => <option value={item.uploadId} key={item.uploadId}>{item.fileName}</option>)}</select></label><label><span>工作表</span><select value={binding.sheet_selector} onChange={event => selectBindingSheet(task.task_id, index, binding.workbook_upload_id, event.target.value)}>{workbook?.sheets.map(item => <option value={item.sheetName} key={item.sheetName}>{item.sheetName}</option>)}</select></label><label><span>欄位</span><select value={binding.column_selector} onChange={event => updateBinding(task.task_id, index, { column_selector: event.target.value })}>{sheet?.columns.map(column => <option value={column} key={column}>{column}</option>)}</select></label><label><span>彙總方式</span><input value={binding.aggregation} onChange={event => updateBinding(task.task_id, index, { aggregation: event.target.value })} /></label></div>; })}{missing.map(variable => <button className="button secondary small" type="button" key={variable.symbol} onClick={() => addMissingBinding(task.task_id, variable.symbol)}>新增變數綁定：{variable.symbol}</button>)}{missing.length > 0 && <small className="binding-warning">尚缺 {missing.map(item => item.symbol).join('、')}；未補齊不可計算。</small>}</article>; })}</div><div className="binding-rules"><strong>新增／修改規則</strong><span>新增公式時，同步新增公式變數、對應計算任務、每個變數的欄位綁定與輸出欄位。</span><span>只改欄位時使用選單；不要手動改 workbook ID 或檔名。</span><span>新增圖表時，需連到既有 calculation task 與 formula；不確定時用自然語言請 AI 重規劃。</span></div></details>}
+          <label className="prompt-box"><span>完整 JSON 手動編輯（進階）</span><textarea rows={22} value={planJson} onChange={event => { setPlanJson(event.target.value); setPlanDirty(true); }} /></label>
+          <div className="action-row"><small>{planDirty ? '尚有未儲存修改；儲存後才可執行計算。' : '目前計畫已儲存並可送往計算。'}</small><button className="button secondary" disabled={busy || !planDirty} onClick={async () => { try { setBusy(true); const parsed = JSON.parse(planJson); const updated = await awsPlanner.manualEdit(realPlan.jobId, parsed, realPlan.planVersion); setRealPlan(updated); setPlanJson(JSON.stringify(updated.planningOutput, null, 2)); setPlanDirty(false); } catch (reason) { setError(reason instanceof Error ? reason.message : 'JSON 或 Excel 欄位綁定無效'); } finally { setBusy(false); } }}>儲存手動修改</button></div>
           <div className="ai-edit-box"><div><strong>用自然語言重新規劃</strong><small>會以相同 Excel、原 Prompt 與完整修改要求重新生成</small></div><input value={planInstruction} onChange={event => setPlanInstruction(event.target.value)} placeholder="例如：改成 12 頁，增加公式來源與風險頁" /><button className="button secondary" disabled={busy || !planInstruction.trim()} onClick={async () => { try { setBusy(true); const updated = await awsPlanner.revise(realPlan.jobId, planInstruction.trim(), realPlan.planVersion); setRealPlan(updated); setPlanInstruction(''); moveTo('analysis'); } catch (reason) { setError(reason instanceof Error ? reason.message : 'AI 修改失敗'); } finally { setBusy(false); } }}>送出 AI 修改</button></div>
-          <div className="action-row"><button className="button secondary" onClick={() => moveTo('analysis')}>返回分析</button><button className="button primary" disabled={busy} onClick={approvePlan}>核准此版本，Stage ④以 Mock 繼續 →</button></div>
+          <div className="action-row"><button className="button secondary" onClick={() => moveTo('analysis')}>返回分析</button><button className="button primary" disabled={busy} onClick={approvePlan}>核准此版本，執行真實計算 →</button></div>
         </section>}
 
         {stage === 'analysis' && job && !realPlan && <section className="stage-card">
@@ -227,9 +439,26 @@ function App() {
           <div className="action-row"><button className="button secondary" onClick={() => moveTo('analysis')}>返回說明</button><button className="button primary" disabled={busy} onClick={approvePlan}>模擬核准並執行 →</button></div>
         </section>}
 
-        {stage === 'execute' && job && <section className="stage-card">
+        {stage === 'execute' && realPlan && <section className="stage-card">
+          <div className="section-title"><div><span className="eyebrow">Calculation Agent · REAL</span><h2>{realPlan.status === 'CALCULATION_READY' ? '實際 Excel 計算已完成' : realPlan.status === 'CALCULATION_FAILED' ? '計算未完成' : '正在生成並執行受限 Python 計算程式'}</h2><p>程式由已核准的 calculation plan 生成，執行前會驗證安全語法，並只讀取本專案的 Excel。</p></div><span className="badge real">{realPlan.status}</span></div>
+          {realPlan.safeErrorCode && <div className="notice warning"><strong>{PLANNER_ERROR_MESSAGES[realPlan.safeErrorCode] ?? '工作未完成，請稍後再試。'}</strong><small>錯誤代碼：{realPlan.safeErrorCode}</small></div>}
+          {ACTIVE_PLANNER_STATUSES.has(realPlan.status) && <div className="analysis-log"><span /><p><strong>{realPlan.progress?.currentStage === 'calculation-code' ? '生成程式' : realPlan.progress?.currentStage === 'calculation-execution' ? '執行與驗證' : '等待 Fargate'}</strong></p><span /><p>本次執行 {formatElapsed(activeRunStartedAt(realPlan), now)} · 目標 7 分鐘內</p></div>}
+          {realPlan.status === 'CALCULATION_FAILED' && <button className="button primary" disabled={busy} onClick={async () => { try { setBusy(true); setError(''); setRealPlan(await awsPlanner.retryCalculation(realPlan.jobId)); } catch (reason) { setError(reason instanceof Error ? reason.message : '無法重新計算'); } finally { setBusy(false); } }}>{busy ? '正在重新啟動...' : '依相同計畫並沿用錯誤修正 →'}</button>}
+          {realPlan.calculationSummary && <><div className="analysis-grid"><article><span>計算耗時</span><strong>{(realPlan.calculationSummary.durationMs / 1000).toFixed(2)} 秒</strong></article><article><span>任務數</span><strong>{realPlan.calculationSummary.tasks.length}</strong></article><article><span>程式雜湊</span><strong>{realPlan.calculationSummary.codeSha256.slice(0, 12)}</strong></article></div><details className="execution-plan" open><summary>生成的 Python 程式（已驗證）</summary><pre className="calculation-code">{realPlan.calculationSummary.codePreview}</pre></details><div className="requirement-grid">{realPlan.calculationSummary.tasks.map(task => <article key={task.taskId}><strong>{task.metricId} · {task.formulaId}</strong><p>{task.taskId}：{task.rowCount} 筆結果</p>{task.preview.slice(0, 2).map((row, index) => <small key={index}>{JSON.stringify(row)}</small>)}{task.warnings.map(warning => <small key={warning}>⚠ {warning}</small>)}</article>)}</div></>}
+          {realPlan.status === 'CALCULATION_READY' && realPlan.planningOutput && realPlan.calculationSummary && <button className="button primary stage-action" onClick={() => moveTo('preview')}>以真實資料預覽並生成 PPTX →</button>}
+        </section>}
+
+        {stage === 'execute' && job && !realPlan && <section className="stage-card">
           <div className="section-title"><div><span className="eyebrow">Agent runtime</span><h2>Lobster 正在依計畫使用 Skill 與工具</h2></div><div className="counter"><strong>{completedExecution}/{job.stages.length}</strong><span>stages verified</span></div></div>
           <div className="execution-layout"><div className="timeline">{job.stages.map((item) => <article className="stage" key={item.id}><i className={item.status.toLowerCase()} /><div><div><strong>{item.label}</strong><span>{item.status}</span></div><p>{item.description}</p><small>Attempt {item.attempt} · Independent Gate {item.gate ?? 'PENDING'}</small></div></article>)}</div><aside className="runtime-card"><span className="eyebrow">Current worker</span><h3>{job.stages.find((item) => item.status === 'RUNNING')?.label ?? '等待下一階段'}</h3><p>正式版會顯示 Strands agent 的 tool receipt、引用、token、重試與 Gate finding。</p><button className="button primary full" disabled={busy} onClick={advanceExecution}>完成目前 Mock 工作 →</button></aside></div>
+        </section>}
+
+        {stage === 'preview' && realPlan?.planningOutput && realPlan.calculationSummary && <section className="stage-card preview-stage">
+          <div className="section-title"><div><span className="eyebrow">Real calculation preview</span><h2>依真實計算結果建立的簡報</h2><p>每張圖表只會使用已驗證的 calculation artifact；下方可回到計畫頁進行 JSON 或自然語言修改後重新計算。</p></div><span className="badge real">{realPlan.planningOutput.deck_plan.total_pages} SLIDES</span></div>
+          <div className="deck-plan-grid">{realPlan.planningOutput.deck_plan.slides.map(slide => <article className={`deck-page-card ${slide.kind}`} key={slide.page_number}><div className="deck-page-head"><span>{String(slide.page_number).padStart(2, '0')}</span><small>{slide.kind}</small></div><h3>{slide.title}</h3><p>{slide.key_message}</p><small>{slide.chart_ids.length ? `圖表：${slide.chart_ids.join('、')}` : '無圖表'}</small><small>{slide.evidence_requirements.join('、')}</small></article>)}</div>
+          <details className="execution-plan" open><summary>圖表資料欄位與計算方式</summary>{realPlan.planningOutput.prompt_contract.charts.map(chart => { const task = realPlan.planningOutput?.calculation_plan.tasks.find(item => item.task_id === chart.calculation_task_ids[0]); const formula = realPlan.planningOutput?.formula_plan.formulas.find(item => item.formula_id === task?.formula_id); return <article className="plan-card" key={chart.chart_id}><strong>{chart.title}</strong><p>來源欄位：{task?.input_bindings.map(binding => `${binding.workbook_selector}／${binding.sheet_selector}／${binding.column_selector}`).join('；') || '尚無計算任務'}</p><small>公式：{formula?.expression || '尚無公式'}</small><small>計算任務：{task?.task_id || '—'} · 實際結果筆數：{realPlan.calculationSummary?.tasks.find(item => item.taskId === task?.task_id)?.rowCount ?? 0}</small></article>; })}</details>
+          <div className="notice">範本：{template?.name ?? realPlan.templateFileName ?? '尚未選擇。請回到上傳步驟選擇 .pptx 範本。'}。{realPlan.templateFileName && (!template || template.name === realPlan.templateFileName) ? '範本已隨專案私有保存，重新登入或重整後仍可使用。' : template ? '此範本尚未保存到專案；請回到上傳步驟按下保存。' : '範本尚未隨此專案保存。'}文字、原生圖表與頁面會保留為 PowerPoint 可編輯物件。</div>
+          <div className="action-row"><button className="button secondary" onClick={() => moveTo('plan')}>回到計畫修改</button><button className="button primary" disabled={(!realPlan.templateFileName || (template !== null && template.name !== realPlan.templateFileName)) || busy} onClick={() => moveTo('output')}>確認預覽並輸出 PPTX →</button></div>
         </section>}
 
         {stage === 'preview' && job && <section className="stage-card preview-stage">
@@ -239,7 +468,14 @@ function App() {
           <div className="action-row"><button className="button secondary" onClick={() => moveTo('plan')}>回到計畫</button><button className="button primary" onClick={() => moveTo('output')}>確認預覽並輸出 →</button></div>
         </section>}
 
-        {stage === 'output' && <section className="stage-card">
+        {stage === 'output' && realPlan?.planningOutput && realPlan.calculationSummary && <section className="stage-card">
+          <div className="section-title"><div><span className="eyebrow">Python PPTX renderer · REAL</span><h2>輸出可編輯 PowerPoint</h2><p>以使用者範本的 cover/content/back-cover layout 建立核准頁數，並將已驗證計算結果寫入原生文字、圖表與資料來源註記。</p></div><span className="badge real">READY</span></div>
+          <div className="output-grid"><article><span>PPTX</span><h3>可編輯簡報</h3><p>PowerPoint 原生文字與圖表，可在桌面版繼續調整。</p><small>{template?.name ? `範本：${template.name}` : realPlan.templateFileName ? `已保存範本：${realPlan.templateFileName}` : '需要先選擇範本'}</small></article><article><span>DATA</span><h3>真實計算結果</h3><p>{realPlan.calculationSummary.tasks.length} 項已驗證計算任務將提供圖表資料。</p><small>不插入合成資料或示範信用卡資料。</small></article></div>
+          {outputReady && <div className="notice">PPTX 已產生並開始下載。可返回計畫調整後再次輸出。</div>}
+          <div className="action-row"><button className="button secondary" onClick={() => moveTo('preview')}>返回預覽</button><button className="button primary" disabled={!realPlan.templateFileName || (template !== null && template.name !== realPlan.templateFileName) || busy} onClick={() => void exportRealPptx()}>{busy ? 'Python 正在生成...' : '生成並下載 PPTX'}</button></div>
+        </section>}
+
+        {stage === 'output' && !realPlan && <section className="stage-card">
           <div className="section-title"><div><span className="eyebrow">Artifact builder</span><h2>選擇輸出產物</h2></div><span className="badge not-enabled">RENDERER NOT ENABLED</span></div>
           <div className="output-grid">{[['PPTX','原生可編輯圖表與文字'],['XLSX','計算、來源與稽核工作表'],['PDF','固定版面檢視版本']].map(([format, text]) => <article key={format}><span>{format}</span><h3>{format === 'PPTX' ? 'PowerPoint 簡報' : format === 'XLSX' ? '分析工作簿' : 'PDF 預覽'}</h3><p>{text}</p><small>MOCK placeholder</small></article>)}</div>
           {outputReady ? <div className="notice">Synthetic 產物清單已建立；沒有真實檔案被生成或下載。</div> : <button className="button primary stage-action" onClick={() => setOutputReady(true)}>模擬生成產物</button>}

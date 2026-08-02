@@ -147,7 +147,13 @@ class ScriptedPlanningModel(Model):
     async def stream(self, messages: list[dict[str, Any]], tool_specs: list[dict[str, Any]] | None = None, system_prompt: str | None = None, **_: Any) -> AsyncIterable[dict[str, Any]]:
         self.seen_messages.append(messages)
         names = {spec["name"] for spec in tool_specs or []}
-        if "RequirementsPlanningStageOutput" in names:
+        if "RequirementsAndFormulaStageOutput" in names:
+            output_name = "RequirementsAndFormulaStageOutput"
+            output = {
+                "prompt_contract": self.payload["prompt_contract"],
+                "formula_plan": self.payload["formula_plan"],
+            }
+        elif "RequirementsPlanningStageOutput" in names:
             output_name = "RequirementsPlanningStageOutput"
             output = {"prompt_contract": self.payload["prompt_contract"]}
         elif "FormulaPlanningStageOutput" in names:
@@ -166,13 +172,9 @@ class ScriptedPlanningModel(Model):
                     for chart in self.payload["prompt_contract"]["charts"]
                 ],
             }
-        elif "CompositionPlanningStageOutput" in names:
-            output_name = "CompositionPlanningStageOutput"
-            output = {
-                "presentation_generation_plan": self.payload["presentation_generation_plan"],
-                "execution_plan": self.payload["execution_plan"],
-                "deck_plan": self.payload["deck_plan"],
-            }
+        elif "DeckPlan" in names:
+            output_name = "DeckPlan"
+            output = self.payload["deck_plan"]
         elif "PromptAlignmentValidation" in names:
             output_name = "PromptAlignmentValidation"
             output = {
@@ -253,14 +255,20 @@ def test_ai_model_owns_flexible_planning_and_validator_owns_only_invariants() ->
     assert plan.validation_report.checked_references == 9
     assert model.seen_messages and prompt in model.seen_messages[0][-1]["content"][0]["text"]
     assert model.seen_output_models == [
-        "RequirementsPlanningStageOutput",
-        "FormulaPlanningStageOutput",
+        "RequirementsAndFormulaStageOutput",
         "CalculationPlanningStageOutput",
-        "CompositionPlanningStageOutput",
-        "PromptAlignmentValidation",
+        "DeckPlan",
     ]
-    assert plan.validation_report.prompt_alignment_score == 96
+    assert plan.validation_report.prompt_alignment_score == 100
     assert all(prompt not in receipt.model_dump_json() for receipt in plan.tool_receipts)
+    stage_requests = {
+        output_name: messages[-1]["content"][0]["text"]
+        for messages, output_name in zip(model.seen_messages, model.seen_output_models)
+    }
+    assert "S-001" not in stage_requests["RequirementsAndFormulaStageOutput"]
+    assert "S-001" not in stage_requests["CalculationPlanningStageOutput"]
+    assert "column_headers" in stage_requests["CalculationPlanningStageOutput"]
+    assert model.config["max_tokens"] == 32_000
 
 
 def test_calculation_retry_receives_exact_binding_delta_and_prior_output() -> None:

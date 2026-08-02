@@ -151,6 +151,15 @@ describe('real planner v3 contracts', () => {
     expect(() => createUploadRequestSchema.parse({ files: [...files, files[0]] })).toThrow();
   });
 
+  it('allows one PPTX template in addition to twenty Excel files', () => {
+    const excels = Array.from({ length: PLANNER_LIMITS.maxFiles }, (_, index) => ({
+      kind: 'excel', fileName: `input-${index + 1}.xlsx`, sizeBytes: 1, sha256,
+    }));
+    const template = { kind: 'template', fileName: 'brand-template.pptx', sizeBytes: 1, sha256 };
+    expect(createUploadRequestSchema.parse({ files: [...excels, template] }).files).toHaveLength(21);
+    expect(() => createUploadRequestSchema.parse({ files: [...excels, template, template] })).toThrow();
+  });
+
   it('validates formula, deterministic calculation, PPT generation, and full manual edits', () => {
     const output = aiPlanningOutputSchema.parse(planningOutput());
     const edit = manualPlanEditRequestSchema.parse({
