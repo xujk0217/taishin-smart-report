@@ -4,23 +4,41 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "contracts:build": "npm --prefix ../../packages/contracts run build",
+    "prebuild": "npm run contracts:build",
     "build": "tsc",
+    "pretypecheck": "npm run contracts:build",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'lint ok'",
+    "pretest": "npm run contracts:build",
     "test": "vitest run",
     "cdk": "cdk",
+    "presynth": "npm run contracts:build",
     "synth": "cdk synth",
-    "deploy": "cdk deploy --all"
+    "presynth:ui": "npm run contracts:build",
+    "synth:ui": "cdk synth --app 'npx tsx src/ui-only-app.ts' SmartReportWorkshopUiStack",
+    "predeploy": "npm run contracts:build",
+    "deploy": "cdk deploy --all",
+    "predeploy:ui": "npm run contracts:build",
+    "deploy:ui": "cdk deploy --app 'npx tsx src/ui-only-app.ts' SmartReportWorkshopUiStack"
   },
   "dependencies": {
+    "@aws-sdk/client-cloudwatch-logs": "3.1101.0",
+    "@aws-sdk/client-dynamodb": "3.1101.0",
+    "@aws-sdk/client-ecs": "3.1101.0",
+    "@aws-sdk/client-s3": "3.1101.0",
+    "@aws-sdk/client-sfn": "3.1101.0",
+    "@aws-sdk/s3-presigned-post": "3.1101.0",
+    "@aws-sdk/s3-request-presigner": "3.1101.0",
     "@smart-report/contracts": "file:../../packages/contracts",
-    "aws-cdk-lib": "^2.150.0",
-    "constructs": "^10.3.0"
+    "aws-cdk-lib": "2.263.0",
+    "constructs": "10.7.1"
   },
   "devDependencies": {
-    "aws-cdk": "^2.150.0",
-    "tsx": "^4.19.0",
-    "typescript": "^5.9.3",
-    "vitest": "^2.0.0"
+    "@types/node": "22.10.0",
+    "aws-cdk": "2.1133.0",
+    "tsx": "4.19.4",
+    "typescript": "5.9.3",
+    "vitest": "2.1.9"
   }
 }

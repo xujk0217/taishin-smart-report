@@ -228,12 +228,20 @@ function renderChartSlide(
     });
   }
 
-  // Chart
+  // A chart-layout slide must resolve its declared ChartDataSpec. Silently
+  // returning a chartless slide would make the artifact disagree with the
+  // approved SlideDeckSpec.
   const chartSpec = spec.content.chart;
-  if (!chartSpec) return 0;
+  if (!chartSpec) {
+    throw new Error(`Chart slide ${spec.slideIndex} does not declare chart data`);
+  }
 
   const chartData = chartDataIndex.get(chartSpec.chartDataSpecId);
-  if (!chartData) return 0;
+  if (!chartData) {
+    throw new Error(
+      `Chart slide ${spec.slideIndex} references missing ChartDataSpec ${chartSpec.chartDataSpecId}`,
+    );
+  }
 
   // Map chart type to PptxGenJS chart type
   const chartTypeMap: Record<string, string> = {

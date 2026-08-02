@@ -26,6 +26,7 @@ htmlcov/
 
 # CDK
 cdk.out/
+infra/cdk/cdk.out*/
 cdk.context.json
 
 # AWS
@@ -39,4 +40,10 @@ cdk.context.json
 .env.production
 114信用卡資料/
 demo-output/*.pptx
+demo-output/
 apps/web/.env
+
+# Local office files and discarded agent-generation notes
+~$*.docx
+.kiro/specs/
+aidlc-docs/

@@ -128,6 +128,7 @@ def build_chart_data_specs(metrics: list[dict[str, Any]]) -> list[dict[str, Any]
 
         chart_specs.append({
             "chartDataSpecId": f"chart-{idx:03d}",
+            "metricName": metric_name,
             "chartType": "line",
             "categories": categories,
             "series": series,

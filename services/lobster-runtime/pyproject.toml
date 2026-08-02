@@ -1,0 +1,27 @@
+[tool.poetry]
+name = "lobster-runtime"
+version = "0.1.0"
+description = "Registry-bound Strands Agents SDK spike behind LobsterRuntimeAdapter"
+authors = ["team"]
+packages = [{ include = "lobster_runtime", from = "src" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+pydantic = "2.12.5"
+strands-agents = "1.47.0"
+openpyxl = "3.1.5"
+boto3 = "1.37.38"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "9.0.2"
+hypothesis = "6.113.0"
+pip-audit = "2.7.3"
+cyclonedx-bom = "5.5.0"
+
+[build-system]
+requires = ["poetry-core==2.2.1"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
