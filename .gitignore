@@ -34,8 +34,12 @@ cdk.context.json
 
 # Generated
 *.generated.*
+output/
+~$*.pptx
+~$*.xlsx
 
 # Secrets
+.env.aws
 .env.local
 .env.production
 114信用卡資料/
