@@ -5,8 +5,6 @@ import { AwsPlannerClient } from './clients/aws-planner-client';
 import { isCognitoConfigured, isRealPlannerConfigured } from './runtime-config';
 import type { JobSnapshot } from './types/job';
 import type { AIPlanningOutputDto, PlannerJobResponse, PlannerProjectSummary } from '@smart-report/contracts';
-import { exportWithTemplate } from './utils/template-exporter';
-import { createRealPptxSpec } from './utils/real-pptx-spec';
 
 type StageKey = 'upload' | 'analysis' | 'plan' | 'execute' | 'preview' | 'output' | 'send';
 
@@ -22,7 +20,7 @@ const STAGES: Array<{ key: StageKey; number: string; label: string; role: string
 
 const mockClient = new MockJobClient();
 const awsPlanner = new AwsPlannerClient();
-const ACTIVE_PLANNER_STATUSES = new Set(['QUEUED', 'RUNNING', 'REVISION_QUEUED', 'CALCULATION_QUEUED', 'CALCULATING']);
+const ACTIVE_PLANNER_STATUSES = new Set(['QUEUED', 'RUNNING', 'REVISION_QUEUED', 'CALCULATION_QUEUED', 'CALCULATING', 'PRESENTATION_QUEUED', 'PRESENTATION_RENDERING']);
 const RETRYABLE_PLANNING_ERRORS = new Set(['PLAN_OUTPUT_TOO_LARGE', 'PLAN_OUTPUT_STORAGE_LIMIT']);
 const PLANNER_ERROR_MESSAGES: Record<string, string> = {
   PLAN_OUTPUT_TOO_LARGE: 'AI 規劃內容超過單次輸出容量，系統已提高各階段額度；可直接使用原檔案重新規劃。',
@@ -32,12 +30,17 @@ const PLANNER_ERROR_MESSAGES: Record<string, string> = {
   CALCULATION_FAILED: 'Excel 計算未完成；可手動重試，系統會沿用前次錯誤重新產生計算程式。',
   CALCULATION_EXECUTION_TIMEOUT: '計算程式執行超過 120 秒；可手動重試，系統會沿用逾時原因重新產生更有效率的程式。',
   CALCULATION_CODE_REJECTED: '生成的計算程式未通過安全驗證；可手動重試，系統會沿用前次錯誤修正程式。',
+  PRESENTATION_FAILED: 'Agent 簡報生成未完成；可使用同一份計畫與計算結果重新生成。',
+  PRESENTATION_START_FAILED: '簡報生成工作節點未能啟動，請稍後再試。',
 };
 const PLANNER_STAGES = [
   { key: 'requirements_and_formula', label: '理解需求與規劃公式' },
   { key: 'calculation', label: '規劃計算' },
   { key: 'composition', label: '編排簡報' },
   { key: 'prompt-alignment', label: '核對 Prompt' },
+  { key: 'calculation-code', label: '生成計算程式' },
+  { key: 'calculation-execution', label: '執行計算' },
+  { key: 'presentation-render', label: 'Agent 生成 PPTX' },
 ] as const;
 
 function formatElapsed(startedAt: string, now: number) {
@@ -51,10 +54,12 @@ function progressStateText(state: string | undefined) {
 }
 
 function activeRunStartedAt(plan: PlannerJobResponse) {
-  return ['CALCULATION_QUEUED', 'CALCULATING'].includes(plan.status) ? plan.updatedAt : plan.createdAt;
+  return ['CALCULATION_QUEUED', 'CALCULATING', 'PRESENTATION_QUEUED', 'PRESENTATION_RENDERING'].includes(plan.status) ? plan.updatedAt : plan.createdAt;
 }
 
 function stageForRealPlan(plan: PlannerJobResponse): { stage: StageKey; maxStage: number } {
+  if (['PRESENTATION_READY'].includes(plan.status)) return { stage: 'output', maxStage: 5 };
+  if (['PRESENTATION_QUEUED', 'PRESENTATION_RENDERING', 'PRESENTATION_FAILED'].includes(plan.status)) return { stage: 'output', maxStage: 5 };
   if (['CALCULATION_READY'].includes(plan.status)) return { stage: 'preview', maxStage: 4 };
   if (['CALCULATION_QUEUED', 'CALCULATING', 'CALCULATION_FAILED'].includes(plan.status)) return { stage: 'execute', maxStage: 3 };
   if (['NEEDS_REVIEW', 'APPROVED'].includes(plan.status) && plan.planningOutput) return { stage: 'plan', maxStage: 2 };
@@ -262,17 +267,33 @@ function App() {
 
   async function exportRealPptx() {
     if (!realPlan?.planningOutput || !realPlan.calculationSummary) throw new Error('請先完成真實計算');
-    if (!template && !realPlan.templateFileName) throw new Error('請先上傳 PPTX 範本');
     if (template && template.name !== realPlan.templateFileName) throw new Error('你選了新的 PPTX 範本，請先將它保存到此專案再輸出。');
     setBusy(true);
     setError('');
     try {
-      const artifact = createRealPptxSpec(realPlan.planningOutput, realPlan.calculationSummary);
-      const safeTitle = realPlan.planningOutput.deck_plan.title.replace(/[\\/:*?"<>|]/g, '_').slice(0, 80) || '分析報告';
-      await exportWithTemplate(template, artifact.slides, artifact.data, `${safeTitle}.pptx`, { jobId: realPlan.jobId });
+      if (!realPlan.presentationSummary) {
+        setRealPlan(await awsPlanner.renderPresentation(realPlan.jobId));
+        moveTo('output');
+        return;
+      }
+      const url = await awsPlanner.presentationDownloadUrl(realPlan.jobId, 'deck');
+      window.location.assign(url);
       setOutputReady(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'PPTX 生成失敗');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function downloadPresentationData() {
+    if (!realPlan?.presentationSummary) return;
+    setBusy(true);
+    setError('');
+    try {
+      window.location.assign(await awsPlanner.presentationDownloadUrl(realPlan.jobId, 'data'));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'XLSX 下載失敗');
     } finally {
       setBusy(false);
     }
@@ -457,8 +478,8 @@ function App() {
           <div className="section-title"><div><span className="eyebrow">Real calculation preview</span><h2>依真實計算結果建立的簡報</h2><p>每張圖表只會使用已驗證的 calculation artifact；下方可回到計畫頁進行 JSON 或自然語言修改後重新計算。</p></div><span className="badge real">{realPlan.planningOutput.deck_plan.total_pages} SLIDES</span></div>
           <div className="deck-plan-grid">{realPlan.planningOutput.deck_plan.slides.map(slide => <article className={`deck-page-card ${slide.kind}`} key={slide.page_number}><div className="deck-page-head"><span>{String(slide.page_number).padStart(2, '0')}</span><small>{slide.kind}</small></div><h3>{slide.title}</h3><p>{slide.key_message}</p><small>{slide.chart_ids.length ? `圖表：${slide.chart_ids.join('、')}` : '無圖表'}</small><small>{slide.evidence_requirements.join('、')}</small></article>)}</div>
           <details className="execution-plan" open><summary>圖表資料欄位與計算方式</summary>{realPlan.planningOutput.prompt_contract.charts.map(chart => { const task = realPlan.planningOutput?.calculation_plan.tasks.find(item => item.task_id === chart.calculation_task_ids[0]); const formula = realPlan.planningOutput?.formula_plan.formulas.find(item => item.formula_id === task?.formula_id); return <article className="plan-card" key={chart.chart_id}><strong>{chart.title}</strong><p>來源欄位：{task?.input_bindings.map(binding => `${binding.workbook_selector}／${binding.sheet_selector}／${binding.column_selector}`).join('；') || '尚無計算任務'}</p><small>公式：{formula?.expression || '尚無公式'}</small><small>計算任務：{task?.task_id || '—'} · 實際結果筆數：{realPlan.calculationSummary?.tasks.find(item => item.taskId === task?.task_id)?.rowCount ?? 0}</small></article>; })}</details>
-          <div className="notice">範本：{template?.name ?? realPlan.templateFileName ?? '尚未選擇。請回到上傳步驟選擇 .pptx 範本。'}。{realPlan.templateFileName && (!template || template.name === realPlan.templateFileName) ? '範本已隨專案私有保存，重新登入或重整後仍可使用。' : template ? '此範本尚未保存到專案；請回到上傳步驟按下保存。' : '範本尚未隨此專案保存。'}文字、原生圖表與頁面會保留為 PowerPoint 可編輯物件。</div>
-          <div className="action-row"><button className="button secondary" onClick={() => moveTo('plan')}>回到計畫修改</button><button className="button primary" disabled={(!realPlan.templateFileName || (template !== null && template.name !== realPlan.templateFileName)) || busy} onClick={() => moveTo('output')}>確認預覽並輸出 PPTX →</button></div>
+          <div className="notice">範本：{template?.name ?? realPlan.templateFileName ?? '未提供，會使用預設 16:9 版型。'}。{realPlan.templateFileName && (!template || template.name === realPlan.templateFileName) ? '範本已隨專案私有保存，重新登入或重整後仍可使用。' : template ? '此範本尚未保存到專案；請回到上傳步驟按下保存。' : '沒有範本時會使用預設樣式。'}文字、原生圖表與頁面會保留為 PowerPoint 可編輯物件。</div>
+          <div className="action-row"><button className="button secondary" onClick={() => moveTo('plan')}>回到計畫修改</button><button className="button primary" disabled={(template !== null && template.name !== realPlan.templateFileName) || busy} onClick={() => moveTo('output')}>交給 Agent 生成 PPTX →</button></div>
         </section>}
 
         {stage === 'preview' && job && <section className="stage-card preview-stage">
@@ -469,10 +490,13 @@ function App() {
         </section>}
 
         {stage === 'output' && realPlan?.planningOutput && realPlan.calculationSummary && <section className="stage-card">
-          <div className="section-title"><div><span className="eyebrow">Python PPTX renderer · REAL</span><h2>輸出可編輯 PowerPoint</h2><p>以使用者範本的 cover/content/back-cover layout 建立核准頁數，並將已驗證計算結果寫入原生文字、圖表與資料來源註記。</p></div><span className="badge real">READY</span></div>
-          <div className="output-grid"><article><span>PPTX</span><h3>可編輯簡報</h3><p>PowerPoint 原生文字與圖表，可在桌面版繼續調整。</p><small>{template?.name ? `範本：${template.name}` : realPlan.templateFileName ? `已保存範本：${realPlan.templateFileName}` : '需要先選擇範本'}</small></article><article><span>DATA</span><h3>真實計算結果</h3><p>{realPlan.calculationSummary.tasks.length} 項已驗證計算任務將提供圖表資料。</p><small>不插入合成資料或示範信用卡資料。</small></article></div>
-          {outputReady && <div className="notice">PPTX 已產生並開始下載。可返回計畫調整後再次輸出。</div>}
-          <div className="action-row"><button className="button secondary" onClick={() => moveTo('preview')}>返回預覽</button><button className="button primary" disabled={!realPlan.templateFileName || (template !== null && template.name !== realPlan.templateFileName) || busy} onClick={() => void exportRealPptx()}>{busy ? 'Python 正在生成...' : '生成並下載 PPTX'}</button></div>
+          <div className="section-title"><div><span className="eyebrow">Strands Presentation Agent · REAL</span><h2>輸出可編輯 PowerPoint</h2><p>Agent 會讀取已核准的 DeckPlan、計算 artifact 與範本，生成 python-pptx 程式並輸出 PPTX/XLSX。</p></div><span className="badge real">{realPlan.status}</span></div>
+          {ACTIVE_PLANNER_STATUSES.has(realPlan.status) && <div className="analysis-log"><span /><p><strong>{realPlan.progress?.currentStage === 'presentation-render' ? 'Agent 正在生成簡報程式與 PPTX' : '等待 Fargate'}</strong></p><span /><p>本次執行 {formatElapsed(activeRunStartedAt(realPlan), now)} · 目標 15 分鐘內</p></div>}
+          {realPlan.safeErrorCode && <div className="notice warning"><strong>{PLANNER_ERROR_MESSAGES[realPlan.safeErrorCode] ?? '簡報生成未完成，請稍後再試。'}</strong><small>錯誤代碼：{realPlan.safeErrorCode}</small></div>}
+          <div className="output-grid"><article><span>PPTX</span><h3>Agent 生成簡報</h3><p>{realPlan.presentationSummary ? `${realPlan.presentationSummary.slideCount} 頁、${realPlan.presentationSummary.chartCount} 個原生圖表` : '尚未生成；按下按鈕後會啟動 Fargate presentation agent。'}</p><small>{template?.name ? `範本：${template.name}` : realPlan.templateFileName ? `已保存範本：${realPlan.templateFileName}` : '未提供範本，使用預設版型'}</small></article><article><span>DATA</span><h3>同步 XLSX</h3><p>{realPlan.presentationSummary ? `${realPlan.presentationSummary.tableCount} 個表格資料同步輸出` : `${realPlan.calculationSummary.tasks.length} 項已驗證計算任務將提供圖表資料。`}</p><small>不插入合成資料或示範資料。</small></article></div>
+          {realPlan.presentationSummary && <details className="execution-plan" open><summary>Agent 生成驗證摘要</summary><div className="requirement-grid"><article><strong>{realPlan.presentationSummary.validationStatus}</strong><p>Renderer SHA：{realPlan.presentationSummary.rendererCodeSha256.slice(0, 12)}</p><small>模型：{realPlan.presentationSummary.modelId}</small></article>{realPlan.presentationSummary.findings.slice(0, 6).map(finding => <article key={`${finding.code}-${finding.message}`}><strong>{finding.severity} · {finding.code}</strong><p>{finding.message}</p><small>{finding.origin_stage}</small></article>)}</div></details>}
+          {outputReady && <div className="notice">下載已開始。可返回計畫調整後重新計算或重新生成。</div>}
+          <div className="action-row"><button className="button secondary" onClick={() => moveTo('preview')}>返回預覽</button>{realPlan.presentationSummary && <button className="button secondary" disabled={busy} onClick={() => void downloadPresentationData()}>下載同步 XLSX</button>}<button className="button primary" disabled={(template !== null && template.name !== realPlan.templateFileName) || busy || ACTIVE_PLANNER_STATUSES.has(realPlan.status)} onClick={() => void exportRealPptx()}>{busy || ACTIVE_PLANNER_STATUSES.has(realPlan.status) ? 'Agent 正在生成...' : realPlan.presentationSummary ? '下載 Agent PPTX' : '啟動 Agent 生成 PPTX'}</button></div>
         </section>}
 
         {stage === 'output' && !realPlan && <section className="stage-card">

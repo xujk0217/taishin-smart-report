@@ -18,6 +18,7 @@ from strands.models import Model
 
 from .artifact_validator import validate_artifacts
 from .presentation_contracts import (
+    ArtifactFinding,
     ArtifactValidationReport,
     EvidencePacketV2,
     PresentationBlueprint,
@@ -93,6 +94,7 @@ class AgentPresentationRuntime:
         output_dir: str | Path,
         template_path: str | Path | None = None,
         file_stem: str = "agent-generated-presentation",
+        expected_slide_count: int | None = None,
     ) -> AgentPresentationResult:
         parsed_blueprint = PresentationBlueprint.model_validate(blueprint)
         parsed_evidence = EvidencePacketV2.model_validate(evidence)
@@ -117,7 +119,11 @@ class AgentPresentationRuntime:
                     template_path=template_path,
                     file_stem=file_stem,
                 )
-                report = validate_artifacts(manifest)
+                report = _with_blueprint_checks(
+                    validate_artifacts(manifest),
+                    manifest,
+                    expected_slide_count=expected_slide_count,
+                )
                 if report.status == "failed_validation":
                     validation_error = "; ".join(f"{f.code}: {f.message}" for f in report.findings[:6])
                     if attempt == 0:
@@ -222,6 +228,30 @@ def _format_renderer_error(error: Exception, source_code: str) -> str:
             generated_line = f"\nGenerated code around failing line:\n{excerpt}"
             break
     return f"{type(error).__name__}: {error}{generated_line}"
+
+
+def _with_blueprint_checks(
+    report: ArtifactValidationReport,
+    manifest: RenderArtifactManifest,
+    *,
+    expected_slide_count: int | None,
+) -> ArtifactValidationReport:
+    findings = list(report.findings)
+    if expected_slide_count is not None and manifest.slide_count != expected_slide_count:
+        findings.append(ArtifactFinding(
+            severity="blocking",
+            code="APPROVED_SLIDE_COUNT_MISMATCH",
+            message=f"Generated PPTX has {manifest.slide_count} slides, but the approved blueprint has {expected_slide_count} slides",
+            origin_stage="artifact-validation",
+        ))
+    status = "failed_validation" if any(finding.severity == "blocking" for finding in findings) else report.status
+    return ArtifactValidationReport(
+        status=status,
+        findings=findings,
+        checked_slide_count=report.checked_slide_count,
+        checked_chart_count=report.checked_chart_count,
+        checked_table_count=report.checked_table_count,
+    )
 
 
 def _utc_now() -> str:

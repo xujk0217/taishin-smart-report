@@ -2,8 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { CloudWatchLogsClient, DescribeLogStreamsCommand, FilterLogEventsCommand, GetLogEventsCommand } from '@aws-sdk/client-cloudwatch-logs';
 import { DynamoDBClient, GetItemCommand, PutItemCommand, QueryCommand, UpdateItemCommand, type AttributeValue } from '@aws-sdk/client-dynamodb';
 import { DescribeTasksCommand, ECSClient, ListTasksCommand } from '@aws-sdk/client-ecs';
-import { HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { ListExecutionsCommand, SFNClient, StartExecutionCommand } from '@aws-sdk/client-sfn';
 import {
   approvePlanRequestSchema,
@@ -61,10 +62,13 @@ export async function handler(event: ApiEvent) {
     const jobId = event.pathParameters?.jobId;
     if (!jobId) throw new RequestError(404, 'NOT_FOUND');
     if (method === 'POST' && path.endsWith('/template/uploads')) return await attachTemplate(ownerSub, jobId, event);
+    if (method === 'GET' && path.endsWith('/presentations/deck')) return await presentationDownload(ownerSub, jobId, 'deck');
+    if (method === 'GET' && path.endsWith('/presentations/data')) return await presentationDownload(ownerSub, jobId, 'data');
     if (method === 'GET') return await getPlan(ownerSub, jobId);
     if (method === 'POST' && path.endsWith('/revisions')) return await revisePlan(ownerSub, jobId, event);
     if (method === 'POST' && path.endsWith('/retry')) return await retryPlanning(ownerSub, jobId);
     if (method === 'POST' && path.endsWith('/calculations')) return await retryCalculation(ownerSub, jobId);
+    if (method === 'POST' && path.endsWith('/presentations')) return await renderPresentation(ownerSub, jobId);
     if (method === 'PUT') return await manuallyEditPlan(ownerSub, jobId, event);
     if (method === 'POST' && path.endsWith('/approve')) return await approvePlan(ownerSub, jobId, event);
     throw new RequestError(404, 'NOT_FOUND');
@@ -422,6 +426,72 @@ async function retryCalculation(ownerSub: string, jobId: string) {
   return getPlan(ownerSub, jobId);
 }
 
+async function renderPresentation(ownerSub: string, jobId: string) {
+  const item = await ownedItem(ownerSub, jobId);
+  const status = item.status?.S ?? '';
+  if (!['CALCULATION_READY', 'PRESENTATION_FAILED'].includes(status) || !item.planningOutputJson?.S || !item.calculationArtifactKey?.S) {
+    throw new RequestError(409, 'STALE_OR_INVALID_STATE');
+  }
+  try {
+    await ddb.send(new UpdateItemCommand({
+      TableName: requiredEnv('PLANNER_TABLE'), Key: { jobId: { S: jobId } },
+      UpdateExpression: 'SET #status = :queued, updatedAt = :now REMOVE safeErrorCode',
+      ConditionExpression: 'ownerSub = :owner AND (#status = :ready OR #status = :failed) AND attribute_exists(planningOutputJson) AND attribute_exists(calculationArtifactKey)',
+      ExpressionAttributeNames: { '#status': 'status' },
+      ExpressionAttributeValues: {
+        ':queued': { S: 'PRESENTATION_QUEUED' }, ':ready': { S: 'CALCULATION_READY' },
+        ':failed': { S: 'PRESENTATION_FAILED' }, ':now': { S: new Date().toISOString() },
+        ':owner': { S: ownerSub },
+      },
+    }));
+  } catch { throw new RequestError(409, 'STALE_OR_INVALID_STATE'); }
+  try {
+    await startPlanner(jobId, 'RENDER_PRESENTATION', Number(item.planVersion?.N ?? 0));
+  } catch {
+    try {
+      await ddb.send(new UpdateItemCommand({
+        TableName: requiredEnv('PLANNER_TABLE'), Key: { jobId: { S: jobId } },
+        UpdateExpression: 'SET #status = :failed, safeErrorCode = :code, updatedAt = :now',
+        ConditionExpression: 'ownerSub = :owner AND #status = :queued',
+        ExpressionAttributeNames: { '#status': 'status' },
+        ExpressionAttributeValues: {
+          ':failed': { S: 'PRESENTATION_FAILED' }, ':queued': { S: 'PRESENTATION_QUEUED' },
+          ':code': { S: 'PRESENTATION_START_FAILED' },
+          ':now': { S: new Date().toISOString() }, ':owner': { S: ownerSub },
+        },
+      }));
+    } catch {
+      console.error(JSON.stringify({ level: 'error', code: 'PRESENTATION_START_ROLLBACK_FAILED', jobId }));
+    }
+    throw new RequestError(503, 'PRESENTATION_START_FAILED');
+  }
+  return getPlan(ownerSub, jobId);
+}
+
+async function presentationDownload(ownerSub: string, jobId: string, kind: 'deck' | 'data') {
+  const item = await ownedItem(ownerSub, jobId);
+  if (item.status?.S !== 'PRESENTATION_READY' || !item.presentationSummaryJson?.S) {
+    throw new RequestError(409, 'STALE_OR_INVALID_STATE');
+  }
+  let summary: { deckKey?: unknown; dataWorkbookKey?: unknown };
+  try {
+    summary = JSON.parse(item.presentationSummaryJson.S) as typeof summary;
+  } catch {
+    throw new RequestError(409, 'PRESENTATION_ARTIFACT_UNAVAILABLE');
+  }
+  const key = kind === 'deck' ? summary.deckKey : summary.dataWorkbookKey;
+  if (typeof key !== 'string' || !key.startsWith(`plans/${jobId}/presentations/`)) {
+    throw new RequestError(409, 'PRESENTATION_ARTIFACT_UNAVAILABLE');
+  }
+  const fileName = kind === 'deck' ? 'agent-report.pptx' : 'agent-report-data.xlsx';
+  const url = await getSignedUrl(s3, new GetObjectCommand({
+    Bucket: requiredEnv('PLANNER_INPUT_BUCKET'),
+    Key: key,
+    ResponseContentDisposition: `attachment; filename="${fileName}"`,
+  }), { expiresIn: 10 * 60 });
+  return response(200, { url, expiresInSeconds: 10 * 60 });
+}
+
 async function ownedItem(ownerSub: string, jobId: string) {
   const result = await ddb.send(new GetItemCommand({ TableName: requiredEnv('PLANNER_TABLE'), Key: { jobId: { S: jobId } }, ConsistentRead: true }));
   const item = result.Item;
@@ -454,6 +524,7 @@ function publicItem(item: Record<string, { S?: string; N?: string }>) {
     safeErrorCode: item.safeErrorCode?.S ?? null,
     promptAlignmentScore: item.promptAlignmentScore?.N ? Number(item.promptAlignmentScore.N) : null,
     calculationSummary: item.calculationSummaryJson?.S ? JSON.parse(item.calculationSummaryJson.S) : null,
+    presentationSummary: item.presentationSummaryJson?.S ? JSON.parse(item.presentationSummaryJson.S) : null,
   };
 }
 
@@ -506,11 +577,12 @@ function projectSummary(item: Record<string, { S?: string; N?: string }>) {
     safeErrorCode: item.safeErrorCode?.S ?? null,
     promptAlignmentScore: item.promptAlignmentScore?.N ? Number(item.promptAlignmentScore.N) : null,
     calculationSummary: item.calculationSummaryJson?.S ? JSON.parse(item.calculationSummaryJson.S) : null,
+    presentationSummary: item.presentationSummaryJson?.S ? JSON.parse(item.presentationSummaryJson.S) : null,
   };
 }
 
-const activePlannerStatuses = new Set(['QUEUED', 'RUNNING', 'REVISION_QUEUED', 'CALCULATION_QUEUED', 'CALCULATING']);
-const progressStages = new Set(['requirements', 'formula', 'calculation', 'composition', 'prompt-alignment', 'calculation-code', 'calculation-execution']);
+const activePlannerStatuses = new Set(['QUEUED', 'RUNNING', 'REVISION_QUEUED', 'CALCULATION_QUEUED', 'CALCULATING', 'PRESENTATION_QUEUED', 'PRESENTATION_RENDERING']);
+const progressStages = new Set(['requirements', 'formula', 'calculation', 'composition', 'prompt-alignment', 'calculation-code', 'calculation-execution', 'presentation-render']);
 
 async function plannerProgress(job: PublicPlannerJob) {
   if (!activePlannerStatuses.has(job.status ?? '')) return null;
@@ -622,6 +694,8 @@ const requestErrorStatus: Record<string, number> = {
   INVALID_STATE: 409,
   STALE_OR_INVALID_STATE: 409,
   PLAN_OUTPUT_STORAGE_LIMIT: 413,
+  PRESENTATION_ARTIFACT_UNAVAILABLE: 409,
+  PRESENTATION_START_FAILED: 503,
 };
 
 function isRequestError(error: unknown): error is { statusCode: number; code: string } {

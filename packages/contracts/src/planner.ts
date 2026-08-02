@@ -36,6 +36,10 @@ export const plannerJobStatusSchema = z.enum([
   'CALCULATING',
   'CALCULATION_READY',
   'CALCULATION_FAILED',
+  'PRESENTATION_QUEUED',
+  'PRESENTATION_RENDERING',
+  'PRESENTATION_READY',
+  'PRESENTATION_FAILED',
   'FAILED',
   'EXPIRED',
 ]);
@@ -525,7 +529,7 @@ export type WorkbookSchema = z.infer<typeof workbookSchemaSchema>;
 // This is deliberately a small, safe projection of a correlated CloudWatch event.
 // It lets a job owner see progress without receiving container logs, prompts, or data.
 export const plannerProgressSchema = z.object({
-  currentStage: z.enum(['requirements', 'formula', 'requirements_and_formula', 'calculation', 'composition', 'prompt-alignment', 'calculation-code', 'calculation-execution']).nullable(),
+  currentStage: z.enum(['requirements', 'formula', 'requirements_and_formula', 'calculation', 'composition', 'prompt-alignment', 'calculation-code', 'calculation-execution', 'presentation-render']).nullable(),
   state: z.enum(['waiting', 'started', 'completed', 'retrying', 'failed']),
   attempt: z.number().int().positive().nullable(),
   updatedAt: isoDateTime.nullable(),
@@ -553,6 +557,32 @@ export const calculationSummarySchema = z.object({
 }).strict();
 export type CalculationSummary = z.infer<typeof calculationSummarySchema>;
 
+const presentationFindingSchema = z.object({
+  severity: z.enum(['blocking', 'warning', 'info']),
+  code: z.string().min(1).max(160),
+  message: z.string().min(1).max(1_000),
+  origin_stage: z.enum(['data', 'analysis', 'design', 'render-code', 'artifact-validation']),
+}).strict();
+
+export const presentationSummarySchema = z.object({
+  executionId: z.string().min(1).max(200),
+  status: z.literal('succeeded'),
+  sdkVersion: z.string().min(1).max(80),
+  modelId: z.string().min(1).max(200),
+  generatedAt: isoDateTime,
+  deckKey: z.string().min(1).max(512),
+  dataWorkbookKey: z.string().min(1).max(512),
+  validationKey: z.string().min(1).max(512),
+  rendererCodeKey: z.string().min(1).max(512),
+  rendererCodeSha256: sha256,
+  slideCount: z.number().int().positive().max(80),
+  chartCount: z.number().int().nonnegative().max(200),
+  tableCount: z.number().int().nonnegative().max(200),
+  validationStatus: z.enum(['final', 'draft', 'failed_validation']),
+  findings: z.array(presentationFindingSchema).max(20),
+}).strict();
+export type PresentationSummary = z.infer<typeof presentationSummarySchema>;
+
 export const plannerJobResponseSchema = z.object({
   jobId: uuid,
   status: plannerJobStatusSchema,
@@ -570,6 +600,7 @@ export const plannerJobResponseSchema = z.object({
   promptAlignmentScore: z.number().int().min(0).max(100).nullable(),
   calculationSummary: calculationSummarySchema.nullable(),
   progress: plannerProgressSchema,
+  presentationSummary: presentationSummarySchema.nullable(),
 }).strict();
 export type PlannerJobResponse = z.infer<typeof plannerJobResponseSchema>;
 
@@ -591,6 +622,7 @@ export const plannerProjectSummarySchema = z.object({
   safeErrorCode: z.string().max(120).nullable(),
   promptAlignmentScore: z.number().int().min(0).max(100).nullable(),
   calculationSummary: calculationSummarySchema.nullable(),
+  presentationSummary: presentationSummarySchema.nullable(),
 }).strict();
 export type PlannerProjectSummary = z.infer<typeof plannerProjectSummarySchema>;
 

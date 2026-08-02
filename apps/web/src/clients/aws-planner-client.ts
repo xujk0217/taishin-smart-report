@@ -65,6 +65,16 @@ export class AwsPlannerClient {
     return plannerJobResponseSchema.parse(await this.request(`/v1/plans/${jobId}/calculations`, { method: 'POST' }));
   }
 
+  async renderPresentation(jobId: string): Promise<PlannerJobResponse> {
+    return plannerJobResponseSchema.parse(await this.request(`/v1/plans/${jobId}/presentations`, { method: 'POST' }));
+  }
+
+  async presentationDownloadUrl(jobId: string, artifact: 'deck' | 'data' = 'deck'): Promise<string> {
+    const body = await this.request(`/v1/plans/${jobId}/presentations/${artifact}`, { method: 'GET' }) as { url?: unknown };
+    if (typeof body.url !== 'string') throw new Error('PRESENTATION_DOWNLOAD_URL_UNAVAILABLE');
+    return body.url;
+  }
+
   private async request(path: string, init: RequestInit): Promise<unknown> {
     const token = await getIdToken();
     if (!token) throw new Error('登入已逾時，請重新使用 Cognito 登入');

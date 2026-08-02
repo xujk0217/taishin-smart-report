@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import tempfile
@@ -18,6 +19,8 @@ from strands.models import BedrockModel
 from .adapter import StageOutputTooLargeError, StrandsLobsterRuntimeAdapter
 from .calculation import generate_and_execute
 from .contracts import AIPlanningOutput
+from .presentation_agent import AgentPresentationRuntime
+from .stage2_presentation_bridge import build_presentation_inputs
 
 MAX_PROFILE_SHEETS = 12
 MAX_PROFILE_ROWS = 4
@@ -186,6 +189,9 @@ def _download_and_profile_parallel(
 def run(job_id: str, operation: str) -> None:
     if operation == "CALCULATE":
         run_calculation(job_id)
+        return
+    if operation == "RENDER_PRESENTATION":
+        run_presentation(job_id)
         return
     table = boto3.resource("dynamodb").Table(required_env("PLANNER_TABLE"))
     s3 = boto3.client("s3", config=Config(connect_timeout=5, read_timeout=60, retries={"max_attempts": 2}))
@@ -425,6 +431,178 @@ def run_calculation(job_id: str) -> None:
         )
 
 
+def run_presentation(job_id: str) -> None:
+    table = boto3.resource("dynamodb").Table(required_env("PLANNER_TABLE"))
+    s3 = boto3.client("s3", config=Config(connect_timeout=5, read_timeout=60, retries={"max_attempts": 2}))
+    item = table.get_item(Key={"jobId": job_id}, ConsistentRead=True).get("Item")
+    if not item:
+        raise RuntimeError("JOB_NOT_FOUND")
+    attempt_id = f"{job_id}:{utc_now()}"
+    table.update_item(
+        Key={"jobId": job_id},
+        UpdateExpression="SET #status = :running, presentationAttemptId = :attempt, updatedAt = :now REMOVE safeErrorCode",
+        ConditionExpression="#status = :queued AND attribute_exists(planningOutputJson) AND attribute_exists(calculationArtifactKey)",
+        ExpressionAttributeNames={"#status": "status"},
+        ExpressionAttributeValues={
+            ":running": "PRESENTATION_RENDERING",
+            ":queued": "PRESENTATION_QUEUED",
+            ":attempt": attempt_id,
+            ":now": utc_now(),
+        },
+    )
+    try:
+        planning_output = AIPlanningOutput.model_validate_json(item["planningOutputJson"])
+        bucket = required_env("PLANNER_INPUT_BUCKET")
+        artifact_payload = _load_json_object(s3, bucket, item["calculationArtifactKey"])
+        blueprint, evidence = build_presentation_inputs(planning_output, artifact_payload)
+        uploads = json.loads(item["uploadManifestJson"])
+        template_upload = next((upload for upload in uploads if upload.get("kind") == "template"), None)
+        model_id = os.environ.get(
+            "PRESENTATION_BEDROCK_MODEL_ID",
+            os.environ.get("COMPLEX_BEDROCK_MODEL_ID", required_env("BEDROCK_MODEL_ID")),
+        )
+        model = BedrockModel(
+            model_id=model_id, region_name=required_env("AWS_REGION"),
+            temperature=0.1, max_tokens=int(os.environ.get("PRESENTATION_BEDROCK_MAX_TOKENS", "16000")),
+            boto_client_config=Config(connect_timeout=8, read_timeout=180, retries={"total_max_attempts": 1, "mode": "standard"}),
+        )
+        with tempfile.TemporaryDirectory(prefix="presentation-") as directory:
+            template_path: Path | None = None
+            if template_upload:
+                template_path = Path(directory) / "template.pptx"
+                s3.download_file(bucket, template_upload["objectKey"], str(template_path))
+            output_dir = Path(directory) / "out"
+            _emit(job_id, "presentation-render", "started")
+            result = AgentPresentationRuntime(model).generate(
+                prompt=item["prompt"],
+                blueprint=blueprint,
+                evidence=evidence,
+                output_dir=output_dir,
+                template_path=template_path,
+                file_stem="agent-rendered-presentation",
+                expected_slide_count=planning_output.deck_plan.total_pages,
+            )
+            _emit(job_id, "presentation-render", "completed")
+            execution_id = result.execution_id
+            base_key = f"plans/{job_id}/presentations/{execution_id}"
+            pptx_key = f"{base_key}/deck.pptx"
+            xlsx_key = f"{base_key}/data.xlsx"
+            validation_key = f"{base_key}/validation.json"
+            renderer_key = f"{base_key}/renderer.py"
+            s3.upload_file(result.manifest.pptx_path, bucket, pptx_key, ExtraArgs={
+                "ContentType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                "ServerSideEncryption": "AES256",
+            })
+            s3.upload_file(result.manifest.xlsx_path, bucket, xlsx_key, ExtraArgs={
+                "ContentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "ServerSideEncryption": "AES256",
+            })
+            s3.put_object(
+                Bucket=bucket, Key=validation_key,
+                Body=result.validation_report.model_dump_json().encode("utf-8"),
+                ContentType="application/json", ServerSideEncryption="AES256",
+            )
+            s3.put_object(
+                Bucket=bucket, Key=renderer_key,
+                Body=result.renderer_program.source_code.encode("utf-8"),
+                ContentType="text/x-python", ServerSideEncryption="AES256",
+            )
+        summary_json = json.dumps({
+            "executionId": result.execution_id,
+            "status": "succeeded",
+            "sdkVersion": result.sdk_version,
+            "modelId": model_id,
+            "generatedAt": utc_now(),
+            "deckKey": pptx_key,
+            "dataWorkbookKey": xlsx_key,
+            "validationKey": validation_key,
+            "rendererCodeKey": renderer_key,
+            "rendererCodeSha256": _sha256(result.renderer_program.source_code),
+            "slideCount": result.manifest.slide_count,
+            "chartCount": result.manifest.chart_count,
+            "tableCount": result.manifest.table_count,
+            "validationStatus": result.validation_report.status,
+            "findings": [finding.model_dump(mode="json") for finding in result.validation_report.findings[:20]],
+        }, ensure_ascii=False, separators=(",", ":"))
+        now = utc_now()
+        stored_bytes = ensure_storable_job_item(
+            item,
+            {
+                "status": "PRESENTATION_READY",
+                "presentationSummaryJson": summary_json,
+                "updatedAt": now,
+            },
+            removals=("safeErrorCode", "presentationRetryContext"),
+        )
+        print(json.dumps({
+            "level": "info",
+            "jobId": job_id,
+            "stage": "presentation-render",
+            "code": "DYNAMODB_ITEM_PREFLIGHT_OK",
+            "estimatedBytes": stored_bytes,
+            "safeLimitBytes": MAX_STORED_JOB_ITEM_BYTES,
+        }))
+        table.update_item(
+            Key={"jobId": job_id},
+            UpdateExpression="SET #status = :ready, presentationSummaryJson = :summary, updatedAt = :now REMOVE safeErrorCode, presentationRetryContext, presentationAttemptId",
+            ConditionExpression="#status = :running AND presentationAttemptId = :attempt",
+            ExpressionAttributeNames={"#status": "status"},
+            ExpressionAttributeValues={
+                ":ready": "PRESENTATION_READY",
+                ":running": "PRESENTATION_RENDERING",
+                ":attempt": attempt_id,
+                ":summary": summary_json,
+                ":now": now,
+            },
+        )
+    except Exception as error:
+        error_reason = str(error).replace("\n", " ")[:240]
+        code = (
+            "PLAN_OUTPUT_STORAGE_LIMIT"
+            if isinstance(error, StoredPlanTooLargeError)
+            else "PRESENTATION_VALIDATION_FAILED"
+            if "failed_validation" in error_reason
+            else "PRESENTATION_FAILED"
+        )
+        print(json.dumps({
+            "level": "error",
+            "jobId": job_id,
+            "stage": "presentation-render",
+            "code": code,
+            "errorType": type(error).__name__,
+        }))
+        table.update_item(
+            Key={"jobId": job_id},
+            UpdateExpression="SET #status = :failed, safeErrorCode = :code, presentationRetryContext = :retryContext, updatedAt = :now REMOVE presentationAttemptId",
+            ConditionExpression="#status = :running AND presentationAttemptId = :attempt",
+            ExpressionAttributeNames={"#status": "status"},
+            ExpressionAttributeValues={
+                ":failed": "PRESENTATION_FAILED",
+                ":running": "PRESENTATION_RENDERING",
+                ":attempt": attempt_id,
+                ":code": code,
+                ":retryContext": error_reason or code,
+                ":now": utc_now(),
+            },
+        )
+
+
+def _load_json_object(s3: Any, bucket: str, key: str) -> dict[str, Any]:
+    body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+    value = json.loads(body)
+    if not isinstance(value, dict):
+        raise RuntimeError("S3_JSON_OBJECT_EXPECTED")
+    return value
+
+
+def _sha256(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _emit(job_id: str, stage: str, status: str) -> None:
+    print(json.dumps({"level": "info", "jobId": job_id, "stage": stage, "status": status}))
+
+
 def utc_now() -> str:
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
@@ -440,7 +618,7 @@ def required_env(name: str) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--job-id", default=os.environ.get("PLANNER_JOB_ID"))
-    parser.add_argument("--operation", choices=["CREATE", "REVISE", "CALCULATE"], default=os.environ.get("PLANNER_OPERATION"))
+    parser.add_argument("--operation", choices=["CREATE", "REVISE", "CALCULATE", "RENDER_PRESENTATION"], default=os.environ.get("PLANNER_OPERATION"))
     arguments = parser.parse_args()
     if not arguments.job_id or not arguments.operation:
         parser.error("job id and operation are required")

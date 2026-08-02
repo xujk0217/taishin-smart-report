@@ -141,7 +141,7 @@ export class UiStack extends cdk.Stack {
       logBucket: accessLogs,
       logFilePrefix: 'cloudfront/',
       webAclId: webAcl.attrArn,
-      comment: 'Real Excel, prompt, calculation, and editable PPTX rendering service.',
+      comment: 'Real Excel, prompt, calculation, and agent-rendered editable PPTX service.',
     });
 
     this.userPool = new cognito.UserPool(this, 'UiUsers', {
@@ -240,7 +240,7 @@ export class UiStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'UserPoolClientId', { value: this.userPoolClient.userPoolClientId });
     new cdk.CfnOutput(this, 'CognitoDomain', { value: authDomain });
     new cdk.CfnOutput(this, 'PlannerApiUrl', { value: plannerApiUrl });
-    new cdk.CfnOutput(this, 'EnabledCapabilities', { value: 'cognito,upload,prompt,planner-api,fargate,bedrock,plan-review,calculation-codegen,calculation-execution,pptx-template-rendering' });
+    new cdk.CfnOutput(this, 'EnabledCapabilities', { value: 'cognito,upload,prompt,planner-api,fargate,bedrock,plan-review,calculation-codegen,calculation-execution,agent-pptx-rendering,pptx-template-rendering' });
     new cdk.CfnOutput(this, 'DisabledCapabilities', { value: 'research,artifact-storage,email' });
   }
 
@@ -316,6 +316,7 @@ export class UiStack extends cdk.Stack {
         // Calculation code generation also uses Opus as the fallback model
         // for correctness-critical code generation.
         CALCULATION_BEDROCK_MODEL_ID: 'us.anthropic.claude-opus-4-6-v1',
+        PRESENTATION_BEDROCK_MODEL_ID: 'us.anthropic.claude-opus-4-6-v1',
         AWS_REGION: config.region,
       },
     });
@@ -362,7 +363,7 @@ export class UiStack extends cdk.Stack {
     runTask.addCatch(orchestrationFailed, { errors: [sfn.Errors.ALL], resultPath: '$.plannerError' });
     const stateMachine = new sfn.StateMachine(this, 'PlannerStateMachine', {
       definitionBody: sfn.DefinitionBody.fromChainable(runTask.next(new sfn.Succeed(this, 'PlannerComplete'))),
-      stateMachineType: sfn.StateMachineType.STANDARD, timeout: cdk.Duration.seconds(420),
+      stateMachineType: sfn.StateMachineType.STANDARD, timeout: cdk.Duration.seconds(900),
       logs: { destination: new logs.LogGroup(this, 'PlannerStateMachineLogs', { retention: logs.RetentionDays.THREE_MONTHS }), includeExecutionData: false, level: sfn.LogLevel.ERROR },
       tracingEnabled: true,
     });
@@ -432,6 +433,10 @@ export class UiStack extends cdk.Stack {
     plan.addResource('template').addResource('uploads').addMethod('POST', integration, methodOptions);
     plan.addResource('retry').addMethod('POST', integration, methodOptions);
     plan.addResource('calculations').addMethod('POST', integration, methodOptions);
+    const presentations = plan.addResource('presentations');
+    presentations.addMethod('POST', integration, methodOptions);
+    presentations.addResource('deck').addMethod('GET', integration, methodOptions);
+    presentations.addResource('data').addMethod('GET', integration, methodOptions);
     plan.addResource('revisions').addMethod('POST', integration, methodOptions);
     plan.addResource('approve').addMethod('POST', integration, methodOptions);
     v1.addResource('pptx').addResource('render').addMethod('POST', new apigateway.LambdaIntegration(pptxRenderer), methodOptions);
